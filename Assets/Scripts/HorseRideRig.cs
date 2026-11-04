@@ -40,16 +40,15 @@ public class HorseRideRig : MonoBehaviour
 
     [Header("Control (W forward, D right; A left / S back also work)")]
     public bool requireInput = true;
-    [Tooltip("Max forward playback speed (1 = reference video speed)")] public float forwardSpeed = 1f;
+    [Tooltip("Max forward playback speed (1 = reference video speed). Full speed = gallop.")] public float forwardSpeed = 1.3f;
     [Tooltip("Max backward playback speed")] public float backwardSpeed = 0.5f;
-    public float acceleration = 1.0f, deceleration = 1.4f;
     [Tooltip("Holding D (or A) alone makes the horse walk while turning")] public bool steerWalks = true;
     [Range(0, 1)] public float steerWalkSpeed = 0.4f;
     [Tooltip("Max sideways pan in reference px for a layer with steerParallax = 1")] public float maxSteerPx = 260f;
     [Tooltip("How fast the steer value follows the key (per second)")] public float steerResponse = 0.9f;
     [Tooltip("When D is released the view slowly drifts back to centre")] public bool steerReturnsToCenter = true;
     public float steerReturnSpeed = 0.35f;
-    [Tooltip("Road bend added at full steer")] public float pathSteerCurve = 0.45f;
+    [Tooltip("Road bend added at full steer")] public float pathSteerCurve = 0.32f;
     public float steerBankDegrees = 1.2f;
 
     [Header("Rendering")]
@@ -113,11 +112,22 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Tiles travelled per loop (integer = seamless)")] public int pathTilesPerLoop = 2;
     public float pathVanishX = 0f;
     public float pathFadeNear = 0.0f, pathFadeFar = 0.35f;
-    public float pathCurve = -0.32f;
+    public float pathCurve = -0.10f;
     public float pathCurvePower = 2.2f;
     public Color pathTint = new Color(0.86f, 0.84f, 0.95f, 1f);
     [Tooltip("Path colour blends to this near the horizon (fog)")] public Color pathFarColor = new Color(0.30f, 0.26f, 0.45f, 1f);
     public float pathBobAmount = 0.9f;
+
+    [Header("Pine rows along the road (perspective, endless)")]
+    public bool buildPineRows = true;
+    [Tooltip("Trees per side")] public int pinesPerSide = 16;
+    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 2.6f;
+    [Tooltip("Distance of tree trunks from the road centre (world units)")] public Vector2 pineLateral = new Vector2(2.0f, 2.7f);
+    [Tooltip("Tree height in world units (camera height = cameraHeight)")] public Vector2 pineHeight = new Vector2(3.2f, 4.4f);
+    public float pineNear = 0.9f;
+    [Tooltip("Trees fade in from the fog beyond this distance")] public float pineFogStart = 6f, pineFogEnd = 34f;
+    public Color pineNearTint = new Color(0.78f, 0.80f, 0.86f, 1f);
+    public Color pineFogTint = new Color(0.36f, 0.31f, 0.55f, 1f);
 
     [Header("Horse (foreground)")]
     public bool buildHorse = true;
@@ -126,16 +136,26 @@ public class HorseRideRig : MonoBehaviour
     public Color horseTint = Color.white;
     public float horseSteerPx = 34f, horseSteerDegrees = 3f;
 
-    [Header("Gait (walk -> 3-beat canter, driven by speed)")]
-    public float walkStrideHz = 0.95f, canterStrideHz = 1.75f;
-    public Vector2 canterBlend = new Vector2(0.35f, 0.75f);
-    public float walkBobPx = 6f, canterBobPx = 26f;
-    public float pitchPx = 10f;
+    [Header("Gait (walk -> 3-beat canter -> 4-beat gallop, driven by speed)")]
+    [Tooltip("Strides per second")] public float walkStrideHz = 0.95f, canterStrideHz = 1.7f, gallopStrideHz = 2.25f;
+    [Tooltip("Speed fraction where walk blends into canter")] public Vector2 canterBlend = new Vector2(0.28f, 0.55f);
+    [Tooltip("Speed fraction where canter blends into gallop")] public Vector2 gallopBlend = new Vector2(0.72f, 0.95f);
+    [Tooltip("Seconds to ease up to / down from full speed")] public float speedUpTime = 1.4f, slowDownTime = 0.9f;
+    [Tooltip("Vertical camera travel in px: walk / canter / gallop")] public float walkBobPx = 6f, canterBobPx = 26f, gallopBobPx = 34f;
+    [Tooltip("Camera spring (Hz, damping) - smooths the gait curve, slight overshoot after impacts")] public float camSpringHz = 6f, camSpringDamping = 0.55f;
+    public float pitchPx = 12f;
     public float gaitSwayPx = 9f;
-    public float gaitRollDegrees = 0.8f;
-    public float neckPumpPx = 16f;
-    [Range(0, 1)] public float neckPhase = 0.55f;
-    public float neckNodDegrees = 1.4f;
+    public float gaitRollDegrees = 0.9f;
+    [Tooltip("Rider leans back / view lifts while accelerating (px per speed/s)")] public float surgePx = 14f;
+    public float neckPumpPx = 20f;
+    [Range(0, 1)] public float neckPhase = 0.5f;
+    [Tooltip("Horse head spring (Hz, damping): lower = more lag behind the body")] public float headSpringHz = 3.2f, headSpringDamping = 0.45f;
+    public float neckNodDegrees = 2.2f;
+    [Header("Hoof impacts")]
+    [Tooltip("Screen shake on each hoof strike (ref px at full gallop)")] public float impactShakePx = 7f;
+    public float impactShakeDecay = 16f;
+    public bool buildHoofDust = true;
+    public Color hoofDustColor = new Color(0.62f, 0.55f, 0.62f, 0.55f);
     public float earTwitchDegrees = 1.2f;
     public Vector2 earTwitchInterval = new Vector2(1.5f, 4.5f);
 
@@ -168,7 +188,15 @@ public class HorseRideRig : MonoBehaviour
     Texture2D _pathOut, _pathSrc;
     Color32[] _src, _dst;
     int _sw, _sh;
-    float _t, _speed, _bobAmp, _gaitW, _stride, _earTimer = 2f, _earT = 1f, _steer, _distance;
+    float _t, _speed, _speedVel, _accel, _bobAmp, _gaitW, _gallopW, _stride, _prevPh, _earTimer = 2f, _earT = 1f, _steer, _distance;
+    float _camY, _camV, _headY, _headV, _shake, _pathCurveNow;
+    class Pine { public RawImage img; public int side, slot; }
+    readonly List<Pine> _pines = new List<Pine>();
+    readonly List<Texture2D> _pineTex = new List<Texture2D>();
+    RectTransform _pineGroup;
+    class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
+    readonly List<Dust> _dust = new List<Dust>();
+    Texture2D _dustTex;
     Camera _cam, _displayCam;
     RenderTexture _rt;
     readonly List<(RawImage img, float speed, float steer)> _fogSheets = new List<(RawImage, float, float)>();
@@ -330,6 +358,8 @@ public class HorseRideRig : MonoBehaviour
 
         if (buildSmoke) BuildSmoke();
         if (buildPath) BuildPath();
+        if (buildPineRows) BuildPines();
+        if (buildHoofDust) BuildHoofDust();
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
         BuildMotes();
         if (buildFog && foregroundWispAlpha > 0f) AddFogSheet("ForegroundWisps", 0.03f, 0.06f, foregroundWispAlpha, fogDrift * 5f, 517, groundMistColor, 1f);
@@ -595,6 +625,111 @@ public class HorseRideRig : MonoBehaviour
         }
     }
 
+    // ---------------------------------------------------------------- pine rows
+    void BuildPines()
+    {
+        for (int v = 0; v < 8; v++) { var t = Load("T_Ride_Pine" + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
+        if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/T_Ride_Pine*_DF textures"); return; }
+        // same rect as the road strip so trees share the road's perspective mapping
+        _pineGroup = MakeGroup("L8b_PineRows", _world);
+        _pineGroup.anchorMin = Vector2.zero; _pineGroup.anchorMax = new Vector2(1f, pathScreenFraction);
+        _pineGroup.offsetMin = _pineGroup.offsetMax = Vector2.zero; _pineGroup.pivot = new Vector2(vanishingPoint.x, 0f);
+        for (int side = -1; side <= 1; side += 2)
+            for (int i = 0; i < pinesPerSide; i++)
+            {
+                var img = MakeImage("Pine", _pineTex[0], _pineGroup);
+                var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0.02f);
+                _pines.Add(new Pine { img = img, side = side, slot = i });
+            }
+    }
+
+    static float Hash(int n, int side) { uint h = (uint)(n * 374761393 + side * 668265263); h = (h ^ (h >> 13)) * 1274126177u; return ((h ^ (h >> 16)) & 0xFFFF) / 65535f; }
+
+    void UpdatePines(float travel, Vector2 bob)
+    {
+        if (_pineGroup == null || _pines.Count == 0) return;
+        _pineGroup.anchoredPosition = bob * pathBobAmount;
+        float stripPx = (referenceResolution.y + 80f) * pathScreenFraction;
+        float stripW = referenceResolution.x + 80f;
+        float aspect = (float)pathTexWidth / pathTexHeight;
+        float baseIdx = Mathf.Floor(travel / pineSpacing);
+        float frac = travel / pineSpacing - baseIdx;
+        foreach (var p in _pines)
+        {
+            int worldIdx = (int)baseIdx + p.slot;                          // identity of the tree along the endless road
+            float stagger = p.side > 0 ? 0.5f : 0f;
+            float z = pineNear + (p.slot + stagger - frac) * pineSpacing;
+            if (z <= 0.05f) { p.img.enabled = false; continue; }
+            float r1 = Hash(worldIdx, p.side), r2 = Hash(worldIdx * 7 + 3, p.side), r3 = Hash(worldIdx * 13 + 5, p.side);
+            float dy = cameraHeight / z;                                   // fraction of strip height below the horizon
+            float yStrip = pathHorizon - dy;                               // 0..1 inside the strip (can go below 0 = off screen)
+            float vanish = Mathf.Lerp(pathVanishX, 0f, Mathf.Clamp01(dy)) + _pathCurveNow * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
+            float lateral = Mathf.Lerp(pineLateral.x, pineLateral.y, r1);
+            float xf = vanishingPoint.x + vanish + p.side * (lateral / z) / aspect;
+            float h = Mathf.Lerp(pineHeight.x, pineHeight.y, r2) / z * stripPx;
+            var tex = _pineTex[(int)(r3 * _pineTex.Count) % _pineTex.Count];
+            float w = h * tex.width / tex.height;
+            bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f && xf * stripW - w < stripW + 40f;
+            p.img.enabled = visible;
+            if (!visible) continue;
+            p.img.texture = tex;
+            var rt = p.img.rectTransform;
+            rt.anchoredPosition = new Vector2(Mathf.Round(xf * stripW / 3f) * 3f, Mathf.Round(yStrip * stripPx / 3f) * 3f);
+            rt.sizeDelta = new Vector2(Mathf.Round(w / 3f) * 3f, Mathf.Round(h / 3f) * 3f);
+            rt.localScale = new Vector3(r1 > 0.5f ? -1f : 1f, 1f, 1f) ;   // mirror half of them for variety
+            float fog = Smooth(pineFogStart, pineFogEnd, z);
+            var c = Color.Lerp(pineNearTint, pineFogTint, fog);
+            c.a = 1f - Smooth(pineFogEnd - 4f, pineFogEnd + 2f, z);
+            p.img.color = c;
+        }
+        // far trees first, near trees on top
+        _pines.Sort((a, b) => (b.slot + (b.side > 0 ? 0.5f : 0f)).CompareTo(a.slot + (a.side > 0 ? 0.5f : 0f)));
+        for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetSiblingIndex(i);
+    }
+
+    // ---------------------------------------------------------------- hoof dust
+    void BuildHoofDust()
+    {
+        _dustTex = MakePuffTex();
+        for (int i = 0; i < 28; i++)
+        {
+            var img = MakeImage("HoofDust", _dustTex, _world);
+            var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f); rt.pivot = new Vector2(0.5f, 0.5f);
+            img.color = Color.clear; _dust.Add(new Dust { img = img });
+        }
+    }
+
+    void SpawnHoofDust(float strength)
+    {
+        if (_dust.Count == 0 || strength < 0.15f) return;
+        for (int k = 0; k < 2; k++)
+        {
+            Dust d = null; float oldest = -1f;
+            foreach (var q in _dust) if (q.age > oldest) { oldest = q.age; d = q; }
+            if (d == null) return;
+            d.side = Random.value < 0.5f ? -1f : 1f;
+            d.age = 0f; d.life = Random.Range(0.7f, 1.2f);
+            d.pos = new Vector2(d.side * Random.Range(170f, 300f), Random.Range(10f, 70f));
+            d.vel = new Vector2(d.side * Random.Range(60f, 160f), Random.Range(30f, 80f)) * Mathf.Lerp(0.6f, 1.2f, strength);
+        }
+    }
+
+    void UpdateHoofDust(float dt, float sNorm)
+    {
+        foreach (var d in _dust)
+        {
+            if (d.age > d.life) { if (d.img.color.a > 0f) d.img.color = Color.clear; continue; }
+            d.age += dt;
+            float a = d.age / d.life;
+            d.pos += d.vel * dt; d.vel *= Mathf.Exp(-2.5f * dt);
+            d.pos.y -= dt * 160f * sNorm;                                   // left behind as the horse moves on
+            var rt = d.img.rectTransform;
+            rt.anchoredPosition = new Vector2(Mathf.Round(d.pos.x / 3f) * 3f, Mathf.Round(d.pos.y / 3f) * 3f);
+            float sz = Mathf.Round((40f + a * 110f) / 3f) * 3f; rt.sizeDelta = new Vector2(sz, sz);
+            var c = hoofDustColor; c.a *= Smooth(0f, 0.1f, a) * (1f - Smooth(0.35f, 1f, a)); d.img.color = c;
+        }
+    }
+
     void BuildPath()
     {
         _pathSrc = Load("T_Ride_Path");
@@ -676,12 +811,14 @@ public class HorseRideRig : MonoBehaviour
         if (!float.IsNaN(forcedSteer)) input.x = forcedSteer;
         float target = input.y > 0 ? input.y * forwardSpeed : input.y * backwardSpeed;
         if (steerWalks && Mathf.Abs(input.x) > 0.01f && Mathf.Abs(input.y) < 0.01f) target = steerWalkSpeed * forwardSpeed;
-        float rate = Mathf.Abs(target) > Mathf.Abs(_speed) && Mathf.Sign(target) == Mathf.Sign(_speed == 0 ? target : _speed) ? acceleration : deceleration;
-        _speed = Mathf.MoveTowards(_speed, target, rate * dt);
+        // eased speed (SmoothDamp = acceleration ease-in/out)
+        float prevSpeed = _speed;
+        _speed = Mathf.SmoothDamp(_speed, target, ref _speedVel, Mathf.Abs(target) > Mathf.Abs(_speed) ? speedUpTime : slowDownTime, Mathf.Infinity, Mathf.Max(dt, 1e-4f));
+        if (dt > 0f) _accel = Mathf.Lerp(_accel, (_speed - prevSpeed) / dt, 1f - Mathf.Exp(-dt * 4f));
         _t += dt * _speed;
         _distance = Mathf.Max(0f, _distance + dt * _speed);
         float aspd = Mathf.Abs(_speed);
-        _bobAmp = Mathf.MoveTowards(_bobAmp, Mathf.Clamp01(3f * aspd / Mathf.Max(0.01f, forwardSpeed)), dt * 2f);
+        _bobAmp = Mathf.MoveTowards(_bobAmp, Mathf.Clamp01(4f * aspd / Mathf.Max(0.01f, forwardSpeed)), dt * 2f);
         float loopT = Mathf.Repeat(_t, loopDuration) / loopDuration;
 
         // steering (D right / A left)
@@ -691,22 +828,35 @@ public class HorseRideRig : MonoBehaviour
         float steerEase = _steer * (2f - Mathf.Abs(_steer));        // ease-out curve
         float steerPx = steerEase * maxSteerPx;
 
-        // ---- gait ----
+        // ---- gait: walk (4-beat) -> canter (3-beat) -> gallop (4-beat + long suspension) ----
         float sNorm = Mathf.Clamp01(aspd / Mathf.Max(0.01f, forwardSpeed));
-        float canterT = _speed < 0f ? 0f : Smooth(canterBlend.x, canterBlend.y, sNorm);
-        _gaitW = Mathf.MoveTowards(_gaitW, canterT, dt * 1.5f);
-        float strideHz = Mathf.Lerp(walkStrideHz, canterStrideHz, _gaitW) * Mathf.Lerp(0.75f, 1f, sNorm);
+        bool fwd = _speed >= 0f;
+        _gaitW = Mathf.MoveTowards(_gaitW, fwd ? Smooth(canterBlend.x, canterBlend.y, sNorm) : 0f, dt * 1.5f);
+        _gallopW = Mathf.MoveTowards(_gallopW, fwd ? Smooth(gallopBlend.x, gallopBlend.y, sNorm) : 0f, dt * 1.2f);
+        float strideHz = Mathf.Lerp(Mathf.Lerp(walkStrideHz, canterStrideHz, _gaitW), gallopStrideHz, _gallopW) * Mathf.Lerp(0.8f, 1f, sNorm);
         _stride += dt * strideHz * (aspd > 0.0005f || _bobAmp > 0.01f ? 1f : 0f);
         float ph = Mathf.Repeat(_stride, 1f);
-        float vert = Mathf.Lerp(WalkCurve(ph) * walkBobPx, CanterCurve(ph) * canterBobPx, _gaitW);
-        float pitch = Mathf.Lerp(0.3f, 1f, _gaitW) * pitchPx * CanterPitch(ph);
-        float sway = Mathf.Sin(_stride * Mathf.PI) * gaitSwayPx * Mathf.Lerp(1f, 0.7f, _gaitW);
-        Vector2 bob = new Vector2(sway, vert + pitch) * _bobAmp;
+        float vCanter = Mathf.Lerp(CanterCurve(ph) * canterBobPx, GallopCurve(ph) * gallopBobPx, _gallopW);
+        float vertTarget = Mathf.Lerp(WalkCurve(ph) * walkBobPx, vCanter, _gaitW) * _bobAmp;
+        float pitch = Mathf.Lerp(0.3f, 1f, _gaitW) * pitchPx * Mathf.Lerp(CanterPitch(ph), GallopPitch(ph), _gallopW) * _bobAmp;
+        // camera rides on a damped spring: eases the gait curve and overshoots slightly after impacts
+        Spring(ref _camY, ref _camV, vertTarget + pitch, camSpringHz, camSpringDamping, dt);
+
+        // hoof strikes -> screen shake + dust
+        if (dt > 0f && aspd > 0.02f) FireImpacts(_prevPh, ph, sNorm);
+        _prevPh = ph;
+        _shake *= Mathf.Exp(-impactShakeDecay * dt);
+        float tn = (Application.isPlaying ? Time.time : _t) * 37f;
+        Vector2 shake = new Vector2(Mathf.PerlinNoise(tn, 0.3f) - 0.5f, Mathf.PerlinNoise(0.7f, tn) - 0.5f) * 2f * _shake * impactShakePx;
+
+        float sway = Mathf.Sin(_stride * Mathf.PI) * gaitSwayPx * Mathf.Lerp(1f, 0.7f, _gaitW) * _bobAmp;
+        float surge = Mathf.Clamp(_accel, -1.5f, 1.5f) * surgePx;
+        Vector2 bob = new Vector2(sway, _camY - surge) + shake;
         if (_world)
         {
-            float roll = Mathf.Sin(_stride * Mathf.PI + 0.6f) * gaitRollDegrees * _bobAmp - steerEase * steerBankDegrees;
+            float roll = Mathf.Sin(_stride * Mathf.PI + 0.6f) * gaitRollDegrees * Mathf.Lerp(1f, 1.3f, _gallopW) * _bobAmp - steerEase * steerBankDegrees;
             _world.localEulerAngles = new Vector3(0, 0, roll);
-            float sc = 1f + 0.004f * pitch / Mathf.Max(1f, pitchPx) * _bobAmp;
+            float sc = 1f + 0.004f * pitch / Mathf.Max(1f, pitchPx);
             _world.localScale = new Vector3(sc, sc, 1f);
         }
 
@@ -764,20 +914,52 @@ public class HorseRideRig : MonoBehaviour
             DrawPath(loopT * pathTilesPerLoop * pathTileLength, pathCurve + steerEase * pathSteerCurve);
             _path.rectTransform.anchoredPosition = bob * pathBobAmount;
         }
+        _pathCurveNow = pathCurve + steerEase * pathSteerCurve;
+        UpdatePines(_t / loopDuration * pathTilesPerLoop * pathTileLength, bob);
+        UpdateHoofDust(dt, sNorm);
 
         if (_horse)
         {
+            // head/neck: driven by the stride, follows on a softer spring so it lags the body (nod drop on fore impacts, lift in suspension)
             float nph = Mathf.Repeat(ph - neckPhase, 1f);
-            float pump = Mathf.Lerp(Mathf.Sin(nph * Mathf.PI * 4f) * 0.35f, Mathf.Cos(nph * Mathf.PI * 2f), _gaitW);
+            float headTarget = Mathf.Lerp(Mathf.Sin(nph * Mathf.PI * 4f) * 0.35f, Mathf.Cos(nph * Mathf.PI * 2f), _gaitW) * _bobAmp;
+            headTarget -= _camY / Mathf.Max(1f, canterBobPx) * 0.35f;        // inertia: body drops, head keeps going
+            Spring(ref _headY, ref _headV, headTarget, headSpringHz, headSpringDamping, dt);
             var rt = _horse.rectTransform;
-            rt.anchoredPosition = new Vector2(bob.x * 0.55f + steerEase * horseSteerPx, -bob.y * 0.35f + pump * neckPumpPx * _bobAmp);
+            rt.anchoredPosition = new Vector2(bob.x * 0.55f + steerEase * horseSteerPx, -_camY * 0.3f + _headY * neckPumpPx + surge * 0.6f) + shake * 0.5f;
             _earTimer -= dt;
             if (_earTimer <= 0f) { _earTimer = Random.Range(earTwitchInterval.x, earTwitchInterval.y); _earT = 0f; }
             _earT += dt;
             float twitch = _earT < 0.25f ? Mathf.Sin(_earT / 0.25f * Mathf.PI * 2f) * earTwitchDegrees : 0f;
-            rt.localEulerAngles = new Vector3(0, 0, Mathf.Sin(nph * Mathf.PI * 2f) * neckNodDegrees * _bobAmp + twitch - steerEase * horseSteerDegrees);
-            float sy = 1f + 0.012f * twitch / Mathf.Max(0.01f, earTwitchDegrees);
+            float nod = Mathf.Clamp(_headV * 0.25f, -1f, 1f) * neckNodDegrees;
+            rt.localEulerAngles = new Vector3(0, 0, nod + twitch - steerEase * horseSteerDegrees);
+            float sy = 1f + 0.012f * twitch / Mathf.Max(0.01f, earTwitchDegrees) + 0.01f * _headY;
             rt.localScale = new Vector3(1f, sy, 1f);
+        }
+    }
+
+    static void Spring(ref float x, ref float v, float target, float hz, float zeta, float dt)
+    {
+        if (dt <= 0f) { return; }
+        float w = 2f * Mathf.PI * Mathf.Max(0.1f, hz);
+        int steps = Mathf.CeilToInt(dt / (1f / 120f));
+        float h = dt / steps;
+        for (int i = 0; i < steps; i++) { v += (w * w * (target - x) - 2f * zeta * w * v) * h; x += v * h; }
+    }
+
+    static readonly Vector2[] WalkHits = { new Vector2(0f, 0.15f), new Vector2(0.25f, 0.12f), new Vector2(0.5f, 0.15f), new Vector2(0.75f, 0.12f) };
+    static readonly Vector2[] CanterHits = { new Vector2(0f, 0.5f), new Vector2(0.22f, 1f), new Vector2(0.40f, 0.75f) };
+    static readonly Vector2[] GallopHits = { new Vector2(0f, 0.5f), new Vector2(0.09f, 0.55f), new Vector2(0.30f, 0.9f), new Vector2(0.40f, 1f) };
+
+    void FireImpacts(float from, float to, float sNorm)
+    {
+        var hits = _gallopW > 0.5f ? GallopHits : _gaitW > 0.5f ? CanterHits : WalkHits;
+        foreach (var h in hits)
+        {
+            bool crossed = from <= to ? (h.x > from && h.x <= to) : (h.x > from || h.x <= to);
+            if (!crossed) continue;
+            _shake = Mathf.Max(_shake, h.y * Mathf.Lerp(0.15f, 1f, sNorm) * _bobAmp);
+            if (_gaitW > 0.3f) SpawnHoofDust(h.y * sNorm);
         }
     }
 
@@ -792,6 +974,13 @@ public class HorseRideRig : MonoBehaviour
         return -0.55f * Dip(p - 0.00f, 0.035f, 0.09f) - 1.0f * Dip(p - 0.22f, 0.03f, 0.10f) - 0.75f * Dip(p - 0.40f, 0.03f, 0.12f)
                + 0.55f * Dip(p - 0.72f, 0.16f, 0.16f);
     }
+    // transverse gallop: hind pair (0, 0.09), fore pair (0.30, 0.40 strongest), long suspension ~0.72
+    static float GallopCurve(float p)
+    {
+        return -0.5f * Dip(p - 0.00f, 0.03f, 0.07f) - 0.55f * Dip(p - 0.09f, 0.03f, 0.07f) - 0.9f * Dip(p - 0.30f, 0.03f, 0.08f)
+               - 1.0f * Dip(p - 0.40f, 0.03f, 0.10f) + 0.8f * Dip(p - 0.72f, 0.15f, 0.15f);
+    }
+    static float GallopPitch(float p) { return -Dip(p - 0.44f, 0.05f, 0.12f) + 0.5f * Dip(p - 0.10f, 0.07f, 0.10f); }
     static float CanterPitch(float p) { return -Dip(p - 0.45f, 0.06f, 0.14f) + 0.4f * Dip(p - 0.05f, 0.08f, 0.12f); }
     static float WalkCurve(float p)
     {

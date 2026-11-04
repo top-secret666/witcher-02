@@ -164,17 +164,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HorseRideRig
   requireInput: 1
-  forwardSpeed: 1
+  forwardSpeed: 1.3
   backwardSpeed: 0.5
-  acceleration: 1
-  deceleration: 1.4
   steerWalks: 1
   steerWalkSpeed: 0.4
   maxSteerPx: 260
   steerResponse: 0.9
   steerReturnsToCenter: 1
   steerReturnSpeed: 0.35
-  pathSteerCurve: 0.45
+  pathSteerCurve: 0.32
   steerBankDegrees: 1.2
   pixelHeight: 640
   filter: 0
@@ -320,11 +318,21 @@ MonoBehaviour:
   pathVanishX: 0
   pathFadeNear: 0
   pathFadeFar: 0.35
-  pathCurve: -0.32
+  pathCurve: -0.1
   pathCurvePower: 2.2
   pathTint: {r: 0.86, g: 0.84, b: 0.95, a: 1}
   pathFarColor: {r: 0.3, g: 0.26, b: 0.45, a: 1}
   pathBobAmount: 0.9
+  buildPineRows: 1
+  pinesPerSide: 16
+  pineSpacing: 2.6
+  pineLateral: {x: 2, y: 2.7}
+  pineHeight: {x: 3.2, y: 4.4}
+  pineNear: 0.9
+  pineFogStart: 6
+  pineFogEnd: 34
+  pineNearTint: {r: 0.78, g: 0.8, b: 0.86, a: 1}
+  pineFogTint: {r: 0.36, g: 0.31, b: 0.55, a: 1}
   buildHorse: 1
   horseHeight: 0.42
   horsePivotY: 0.08
@@ -332,16 +340,30 @@ MonoBehaviour:
   horseSteerPx: 34
   horseSteerDegrees: 3
   walkStrideHz: 0.95
-  canterStrideHz: 1.75
-  canterBlend: {x: 0.35, y: 0.75}
+  canterStrideHz: 1.7
+  gallopStrideHz: 2.25
+  canterBlend: {x: 0.28, y: 0.55}
+  gallopBlend: {x: 0.72, y: 0.95}
+  speedUpTime: 1.4
+  slowDownTime: 0.9
   walkBobPx: 6
   canterBobPx: 26
-  pitchPx: 10
+  gallopBobPx: 34
+  camSpringHz: 6
+  camSpringDamping: 0.55
+  pitchPx: 12
   gaitSwayPx: 9
-  gaitRollDegrees: 0.8
-  neckPumpPx: 16
-  neckPhase: 0.55
-  neckNodDegrees: 1.4
+  gaitRollDegrees: 0.9
+  surgePx: 14
+  neckPumpPx: 20
+  neckPhase: 0.5
+  headSpringHz: 3.2
+  headSpringDamping: 0.45
+  neckNodDegrees: 2.2
+  impactShakePx: 7
+  impactShakeDecay: 16
+  buildHoofDust: 1
+  hoofDustColor: {r: 0.62, g: 0.55, b: 0.62, a: 0.55}
   earTwitchDegrees: 1.2
   earTwitchInterval: {x: 1.5, y: 4.5}
   buildSmoke: 1

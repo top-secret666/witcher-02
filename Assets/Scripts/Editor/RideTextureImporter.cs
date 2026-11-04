@@ -16,7 +16,7 @@ public class RideTextureImporter : AssetPostprocessor
         ti.npotScale = TextureImporterNPOTScale.None;
         ti.textureCompression = TextureImporterCompression.Uncompressed;
         ti.maxTextureSize = 4096;
-        bool isPathOrHorse = assetPath.Contains("T_Ride_Path") || assetPath.Contains("T_Ride_Horse");
+        bool isPathOrHorse = assetPath.Contains("T_Ride_Path") || assetPath.Contains("T_Ride_Horse") || assetPath.Contains("T_Ride_Pine");
         ti.wrapModeU = isPathOrHorse ? UnityEngine.TextureWrapMode.Clamp : UnityEngine.TextureWrapMode.Mirror;
         ti.wrapModeV = UnityEngine.TextureWrapMode.Clamp;
     }

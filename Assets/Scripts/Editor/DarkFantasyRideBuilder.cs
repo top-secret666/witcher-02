@@ -97,14 +97,14 @@ public static class DarkFantasyRideBuilder
         try
         {
             rig.Build();
-            float[] times = { 0.5f, 2.0f, 3.5f };
+            float[] times = { 1.0f, 3.0f, 4.6f, 4.75f, 5.2f };
             float t = 0; int idx = 0;
-            for (int f = 0; f < 240; f++)
+            for (int f = 0; f < 420; f++)
             {
-                float steer = f > 150 ? 1f : 0f;
+                float steer = f > 330 ? 1f : 0f;
                 rig.Tick(1f / 60f, 1f, steer);
                 t += 1f / 60f;
-                if (idx < times.Length && t >= times[idx] || f == 239)
+                if (idx < times.Length && t >= times[idx] || f == 419)
                 {
                     Canvas.ForceUpdateCanvases();
                     var cam = rig.RenderCamera;
