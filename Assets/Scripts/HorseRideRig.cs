@@ -57,7 +57,7 @@ public class HorseRideRig : MonoBehaviour
     public float steerBankDegrees = 1.2f;
 
     [Header("Rendering")]
-    [Tooltip("Pixel-perfect low-res render height (9:16). 0 = render at screen resolution.")] public int pixelHeight = 1080;
+    [Tooltip("Low-res pixel render height. 0 = render straight at screen resolution (sharpest; point-filtered pixel art).")] public int pixelHeight = 0;
     public FilterMode filter = FilterMode.Point;
     [Tooltip("URP post-processing (bloom, grading, vignette, grain, CA). Uses postProfile or builds one at runtime.")] public bool setupPostFX = true;
     public VolumeProfile postProfile;
@@ -91,11 +91,11 @@ public class HorseRideRig : MonoBehaviour
     public List<ZoomLayer> layers = new List<ZoomLayer>
     {
         new ZoomLayer{ textureName="T_Ride_Mountains",   hierarchyGroup="Background", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.95f,0.93f,1f) },
-        new ZoomLayer{ textureName="T_Ride_Castle",      hierarchyGroup="Background", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
+        new ZoomLayer{ textureName="T_Ride_CastleHD",    hierarchyGroup="Background", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
         new ZoomLayer{ textureName="T_Ride_Valley",      hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
         new ZoomLayer{ textureName="T_Ride_CliffsRight", hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
         new ZoomLayer{ textureName="T_Ride_Spires",      hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
-        new ZoomLayer{ textureName="T_Ride_CliffLeft",   hierarchyGroup="Trees_Left", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.92f,0.92f,0.98f) },
+        new ZoomLayer{ textureName="T_Ride_CliffLeftWide", hierarchyGroup="Trees_Left", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.92f,0.92f,0.98f) },
     };
 
     [Header("Fog (procedural dithered pixel fog)")]
@@ -115,8 +115,9 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Above the horizon the right fog starts at this design-x (keeps the castle clear and crisp)")] public float castleClearX = 0.84f;
     [Tooltip("Fog bank on the left side (over the bottom of the pines and the tall trees)")] public bool buildLeftFog = true;
     [Range(0, 1)] public float leftFogAlpha = 0.9f;
-    [Tooltip("Left fog: solid up to fullTop, then fades smoothly up to top (screen fractions)")] public float leftFogFullTop = 0.16f, leftFogTop = 0.46f;
+    [Tooltip("Left fog: solid up to fullTop, then fades smoothly up to top (screen fractions)")] public float leftFogFullTop = 0.20f, leftFogTop = 0.52f;
     public Color rightFogColor = new Color(0.47f, 0.41f, 0.67f, 1f);
+    public Color leftFogColor = new Color(0.25f, 0.17f, 0.38f, 1f);
     [Tooltip("Slow sideways breathing of the fog bank (ref px); 0 = completely still")] public float rightFogSway = 0f;
 
     [Header("Path (CPU perspective road)")]
@@ -140,8 +141,9 @@ public class HorseRideRig : MonoBehaviour
     public bool buildPineRows = true;
     public bool pinesLeft = true, pinesRight = false;
     [Tooltip("Sprites Resources/Ride/<prefix>0.._DF (falls back to T_Ride_Pine)")] public string pineTexturePrefix = "T_Ride_Tree";
-    [Tooltip("Trees per side")] public int pinesPerSide = 14;
-    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 2.4f;
+    [Tooltip("Clusters per side")] public int pinesPerSide = 9;
+    [Tooltip("Overlapping trees per cluster (varied size and depth)")] [Range(1, 6)] public int pinesPerCluster = 4;
+    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 4.2f;
     [Tooltip("Distance of tree trunks from the road centre (world units)")] public Vector2 pineLateral = new Vector2(1.55f, 2.4f);
     [Tooltip("Tree height in world units (camera/rider eye height = cameraHeight = 1)")] public Vector2 pineHeight = new Vector2(3.4f, 6.5f);
     public float pineNear = 0.9f;
@@ -208,7 +210,7 @@ public class HorseRideRig : MonoBehaviour
 
     // ------------------------------------------------------------------ state
     // Scene objects are serialized (baked by the editor builder); simulation state is runtime only.
-    [System.Serializable] public class Pine { public RawImage img; public int side, slot; }
+    [System.Serializable] public class Pine { public RawImage img; public int side, slot, sub; [System.NonSerialized] public float depth; }
     [System.Serializable] public class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
     [System.Serializable] public class Mote { public RawImage img; public Vector3 p; public float seed, size, speed; public bool firefly; }
     [System.Serializable] public class Crow { public RawImage img; public float x, y, speed, phase, scale; }
@@ -489,7 +491,8 @@ public class HorseRideRig : MonoBehaviour
             if (!tex) { Debug.LogWarning("HorseRideRig: missing Resources/Ride/" + L.textureName); continue; }
             var parent = Group(string.IsNullOrEmpty(L.hierarchyGroup) ? "Midground" : L.hierarchyGroup);
             string nice = L.textureName.Replace("T_Ride_", "");
-            if (nice == "CliffLeft") nice = "BrownTrees_Left";
+            if (nice.StartsWith("CliffLeft")) nice = "TallTrees_Left";
+            if (nice == "CastleHD") nice = "Castle";
             L.group = MakeGroup(nice, parent);
             L.a = MakeImage(nice + "_A", tex, L.group); SetupLayerRect(L.a);
             bool second = (L.motion == Motion.Loop && L.crossfade) || L.motion == Motion.Tunnel;
@@ -497,7 +500,7 @@ public class HorseRideRig : MonoBehaviour
             if (L.motion == Motion.Tunnel && L.tunnelCopies >= 3) { L.c = MakeImage(nice + "_C", tex, L.group); SetupLayerRect(L.c); }
             if (buildMoonRays && L.textureName.Contains("Castle")) { BuildMoonRays(parent); _rays.transform.SetSiblingIndex(L.group.GetSiblingIndex()); }   // rays behind the castle: castle stays crisp
             if (buildFog && buildRightFog && rightFogBackAlpha > 0f && L.textureName.Contains("Valley"))
-                AddSideFog("Fog_Right_Back", parent, 1, rightFogTop, rightFogTop + 0.10f, rightFogBackAlpha, 1f, 401);
+                AddSideFog("Fog_Right_Back", parent, 1, rightFogTop, rightFogTop + 0.10f, rightFogBackAlpha, 1.3f, 401, rightFogColor, 0f);
             if (buildFog && i < layerFogAlpha.Length && layerFogAlpha[i] > 0f)
             {
                 float cy = i < layerFogCenter.Length ? layerFogCenter[i] : 0.3f;
@@ -508,8 +511,8 @@ public class HorseRideRig : MonoBehaviour
         if (buildSmoke) BuildSmoke();
         if (buildPineRows) BuildPines();
         if (buildPath) BuildPath();
-        if (buildFog && buildRightFog && rightFogAlpha > 0f) AddSideFog("Fog_Right_Front", Group("Fog"), 1, rightFogTop - 0.08f, rightFogTop + 0.08f, rightFogAlpha, 1f, 977);
-        if (buildFog && buildLeftFog && leftFogAlpha > 0f) AddSideFog("Fog_Left_Front", Group("Fog"), -1, leftFogFullTop, leftFogTop, leftFogAlpha, 1f, 613);
+        if (buildFog && buildRightFog && rightFogAlpha > 0f) AddSideFog("Fog_Right_Front", Group("Fog"), 1, rightFogTop - 0.16f, rightFogTop + 0.12f, rightFogAlpha, 1f, 977, rightFogColor);
+        if (buildFog && buildLeftFog && leftFogAlpha > 0f) AddSideFog("Fog_Left_Front", Group("Fog"), -1, leftFogFullTop, leftFogTop, leftFogAlpha, 1f, 613, leftFogColor);
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", Group("Fog"), 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
         if (buildHoofDust) BuildHoofDust();
         if (useParticleSystems) BuildParticleSystems(); else BuildMotes();
@@ -640,46 +643,44 @@ public class HorseRideRig : MonoBehaviour
         _fogSheets.Add(new FogSheet { img = img, speed = speed, steer = steer, scroll = true });
     }
 
-    // Fog bank beside the road (side +1 right, -1 left): solid up to fullTop (hides the foot of the mountains), then fades
-    // upward very smoothly to top. The inner edge follows the road edge in perspective, so the fog recedes into the distance
-    // like the road; it is a bit thicker toward the horizon (distance haze). Static, dithered pixel fog with 8 alpha levels.
-    void AddSideFog(string name, RectTransform parent, int side, float fullTop, float top, float alpha, float density, int seed)
+    // Fog bank beside the road (side +1 right, -1 left). It touches the road edge (no gap), follows the road perspective,
+    // is densest near the camera and thins with distance, and above fullTop breaks up into wisps that fade smoothly upward.
+    void AddSideFog(string name, RectTransform parent, int side, float fullTop, float top, float alpha, float density, int seed, Color col, float falloff = 1f)
     {
         float ex = MaxExt, span = 1f + 2f * ex;
         int H = Mathf.Max(32, fogTexWidth) * 16 / 9 / 2, W = Mathf.RoundToInt(H * 9f / 16f * 2f * span);   // ~4 ref px per fog pixel
         var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter };
         var px = new Color32[W * H];
-        Color32 fc = rightFogColor;
+        Color32 fc = col;
         float aspect = (float)pathTexWidth / pathTexHeight;
-        const int Levels = 8;
+        float hz = pathHorizon * pathScreenFraction;
+        const int Levels = 10;
         for (int y = 0; y < H; y++)
         {
             float fy = (y + 0.5f) / H;                                   // 0 bottom .. 1 top of the world rect
-            float ys = fy / Mathf.Max(0.05f, pathScreenFraction);
-            float dyRaw = pathHorizon - ys;
-            float dy = Mathf.Clamp(dyRaw, 0.0f, 1.5f);
+            float dyRaw = pathHorizon - fy / Mathf.Max(0.05f, pathScreenFraction);
+            float dy = Mathf.Clamp(dyRaw, 0f, 1.5f);                     // 0 at the horizon .. 1 at the bottom (near)
             float curve = pathCurve * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
             float half = (pathWorldWidth * 0.5f * dy) / aspect;
-            // inner edge = road edge (+ small margin growing with nearness); above the horizon it stays clear of the castle
-            float roadSide = side > 0 ? vanishingPoint.x + curve + half + 0.02f + 0.04f * dy
-                                      : vanishingPoint.x + curve - half - 0.02f - 0.04f * dy;
-            // above the horizon the fog keeps clear of the castle (right: beyond it, left: left of the road's vanishing point)
-            float hz = pathHorizon * pathScreenFraction;
-            float edge = Mathf.Lerp(roadSide, side > 0 ? castleClearX : vanishingPoint.x - 0.16f, Smooth(hz - 0.05f, hz + 0.04f, fy));
-            float soft = 0.06f + 0.2f * Mathf.Clamp01(dy) + 0.08f * Smooth(hz - 0.05f, hz + 0.04f, fy);   // softness shrinks with distance (perspective)
-            float far = 1f + 0.5f * (1f - Mathf.Clamp01(dyRaw * 2.5f)) * Mathf.Clamp01(dyRaw * 20f + 1f);   // denser toward the horizon
+            // inner edge sits a little INSIDE the road's grass verge so fog and road meet without a dark gap
+            float roadSide = vanishingPoint.x + curve + side * half * 0.86f;
+            float above = Smooth(hz - 0.07f, hz + 0.10f, fy);
+            float edge = Mathf.Lerp(roadSide, side > 0 ? castleClearX : vanishingPoint.x - 0.16f, above);
+            float soft = Mathf.Lerp(0.02f + 0.05f * dy, 0.26f, above);
+            float nearK = Mathf.Lerp(1f, Mathf.Lerp(0.5f, 1f, Smooth(0f, 0.9f, dy)) * (dyRaw < 0f ? 0.5f : 1f), falloff);   // densest near the camera
             for (int x = 0; x < W; x++)
             {
                 float xd = (x + 0.5f) / W * span - ex;                       // design-space x
-                float ftN = fullTop + (Mathf.PerlinNoise(seed * 0.13f + xd * 2.3f, 7.7f) - 0.5f) * 0.05f;
-                float topN = top + (Mathf.PerlinNoise(seed * 0.29f + xd * 1.7f, 3.3f) - 0.5f) * 0.08f;
-                float u = Mathf.Clamp01((fy - ftN) / Mathf.Max(0.02f, topN - ftN));
-                float vert = 1f - u * u * u * (u * (u * 6f - 15f) + 10f);    // smootherstep: very soft upward fade
-                float eN = edge + side * (Mathf.PerlinNoise(seed * 0.17f + fy * 4f, 1.9f) - 0.5f) * 0.05f;
+                float eN = edge + side * (Mathf.PerlinNoise(seed * 0.17f + fy * 6f, xd * 2f) - 0.5f) * soft * 0.8f;   // ragged, not ruler-straight
                 float horiz = side > 0 ? Smooth(eN, eN + soft, xd) : 1f - Smooth(eN - soft, eN, xd);
                 float n = 0f, amp = 0.55f, f = 1f;
-                for (int o = 0; o < 4; o++) { n += amp * Mathf.PerlinNoise(seed + xd * 5f * f, seed * 0.41f + fy * 8f * f); amp *= 0.5f; f *= 2f; }
-                float d = Mathf.Clamp01(horiz * vert * far * density * (0.78f + (n - 0.5f) * 0.8f));
+                for (int o = 0; o < 4; o++) { n += amp * Mathf.PerlinNoise(seed + xd * 5f * f, seed * 0.41f + fy * 7f * f); amp *= 0.5f; f *= 2f; }
+                float w2 = Mathf.PerlinNoise(seed * 0.7f + xd * 2.2f, fy * 3.5f + seed);                  // big wisps
+                float ftN = fullTop + (w2 - 0.5f) * 0.08f;
+                float u = Mathf.Clamp01((fy - ftN) / Mathf.Max(0.02f, top - ftN));
+                float vert = 1f - u * u * u * (u * (u * 6f - 15f) + 10f);    // smootherstep: very soft upward fade
+                vert *= Mathf.Lerp(1f, Mathf.Clamp01(w2 * 1.7f - 0.25f), Smooth(0f, 0.7f, u));        // higher up it disperses into wisps
+                float d = Mathf.Clamp01(horiz * vert * nearK * density * (0.8f + (n - 0.5f) * 0.9f));
                 float q = d * Levels + Bayer(x, y) - 0.5f;
                 int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, Levels);
                 px[y * W + x] = new Color32(fc.r, fc.g, fc.b, (byte)(lvl * 255 / Levels));
@@ -853,9 +854,14 @@ public class HorseRideRig : MonoBehaviour
             if (side < 0 && !pinesLeft || side > 0 && !pinesRight) continue;
             for (int i = 0; i < pinesPerSide; i++)
             {
-                var img = MakeImage((side < 0 ? "Pine_L" : "Pine_R") + i.ToString("00"), _pineTex[i % _pineTex.Count], _pineGroup);
-                var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0f);
-                _pines.Add(new Pine { img = img, side = side, slot = i });
+                var cluster = MakeGroup((side < 0 ? "Cluster_L" : "Cluster_R") + i.ToString("00"), _pineGroup);
+                for (int k = 0; k < Mathf.Max(1, pinesPerCluster); k++)
+                {
+                    var img = MakeImage("Pine" + k, _pineTex[(i + k) % _pineTex.Count], _pineGroup);
+                    img.transform.SetParent(cluster, false);
+                    var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0f);
+                    _pines.Add(new Pine { img = img, side = side, slot = i, sub = k });
+                }
             }
         }
     }
@@ -874,17 +880,20 @@ public class HorseRideRig : MonoBehaviour
         foreach (var p in _pines)
         {
             if (!p.img) continue;
-            int worldIdx = (int)baseIdx + p.slot;                          // identity of the tree along the endless road
+            int worldIdx = (int)baseIdx + p.slot;                          // identity of the cluster along the endless road
+            int id = worldIdx * 8 + p.sub;                                 // identity of the tree inside the cluster
             float stagger = p.side > 0 ? 0.5f : 0f;
-            float z = pineNear + (p.slot + stagger - frac) * pineSpacing;
+            float r1 = Hash(id, p.side), r2 = Hash(id * 7 + 3, p.side), r3 = Hash(id * 13 + 5, p.side), r4 = Hash(id * 29 + 11, p.side);
+            // cluster: the first tree stands at the road edge, the others behind / outward, overlapping
+            float z = pineNear + (p.slot + stagger - frac) * pineSpacing + (p.sub == 0 ? 0f : (0.25f + r4 * 0.9f) * pineSpacing * 0.45f);
+            p.depth = z;
             if (z <= 0.05f) { p.img.enabled = false; continue; }
-            float r1 = Hash(worldIdx, p.side), r2 = Hash(worldIdx * 7 + 3, p.side), r3 = Hash(worldIdx * 13 + 5, p.side);
             float dy = cameraHeight / z;                                   // fraction of strip height below the horizon
             float yStrip = pathHorizon - dy - pineSink;                    // 0..1 inside the strip (can go below 0 = off screen); planted on the ground
             float vanish = Mathf.Lerp(pathVanishX, 0f, Mathf.Clamp01(dy)) + _pathCurveNow * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
-            float lateral = Mathf.Lerp(pineLateral.x, pineLateral.y, r1);
+            float lateral = Mathf.Lerp(pineLateral.x, pineLateral.y, r1 * 0.4f) + p.sub * 0.42f + r4 * 0.35f;
             float xf = vanishingPoint.x + vanish + p.side * (lateral / z) / aspect;
-            float h = Mathf.Lerp(pineHeight.x, pineHeight.y, r2) / z * stripPx;
+            float h = Mathf.Lerp(pineHeight.x, pineHeight.y, r2) * (p.sub == 0 ? 1f : Mathf.Lerp(0.6f, 1.15f, r4)) / z * stripPx;
             var tex = _pineTex[(int)(r3 * _pineTex.Count) % _pineTex.Count];
             float w = h * tex.width / tex.height;
             bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f - _extraPx && xf * stripW - w < stripW + 40f + _extraPx;
@@ -902,8 +911,11 @@ public class HorseRideRig : MonoBehaviour
         }
         // far trees first, near trees on top
         _pines.RemoveAll(q => q == null || !q.img);
-        _pines.Sort((a, b) => (b.slot + (b.side > 0 ? 0.5f : 0f)).CompareTo(a.slot + (a.side > 0 ? 0.5f : 0f)));
-        for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetSiblingIndex(i);
+        // clusters back to front, and inside a cluster far trees first (near ones overlap them)
+        foreach (var p in _pines) if (p.img && p.img.transform.parent != _pineGroup)
+            p.img.transform.parent.SetSiblingIndex(Mathf.Clamp(pinesPerSide - 1 - p.slot + (p.side > 0 ? pinesPerSide : 0), 0, _pineGroup.childCount - 1));
+        _pines.Sort((a, b) => b.depth.CompareTo(a.depth));
+        for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetAsLastSibling();
     }
 
     // ---------------------------------------------------------------- particle systems (fireflies, ash)

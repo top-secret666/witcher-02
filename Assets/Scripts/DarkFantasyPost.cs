@@ -50,7 +50,7 @@ public static class DarkFantasyPost
 
         var fg = Get<FilmGrain>(p);
         fg.type.Override(FilmGrainLookup.Medium3);
-        fg.intensity.Override(0.18f);
+        fg.intensity.Override(0.08f);
         fg.response.Override(0.75f);
 
         var chr = Get<ChromaticAberration>(p);

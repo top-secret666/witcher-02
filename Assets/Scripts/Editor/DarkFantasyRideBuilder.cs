@@ -201,6 +201,7 @@ public static class DarkFantasyRideBuilder
         if (!rig) { Debug.LogError("DarkFantasyRideBuilder: no HorseRideRig in " + ScenePath); return; }
         Debug.Log("DarkFantasyRideBuilder: preview " + tag + " uses baked scene objects: " + rig.IsBuilt + ", children under rig: " + rig.GetComponentsInChildren<Transform>(true).Length);
         rig.forceAspect = aspect;
+        if (rig.pixelHeight <= 0) rig.pixelHeight = 1080;   // preview = what a 1080p screen shows
         try
         {
             rig.BeginRuntime();
@@ -217,7 +218,7 @@ public static class DarkFantasyRideBuilder
                     var cam = rig.RenderCamera;
                     var rt = rig.PixelTarget;
                     bool tmp = rt == null;
-                    if (tmp) { rt = new RenderTexture(Mathf.RoundToInt(960 * aspect), 960, 24); cam.targetTexture = rt; }
+                    if (tmp) { rt = new RenderTexture(Mathf.RoundToInt(1080 * aspect), 1080, 24); cam.targetTexture = rt; }
                     cam.Render();
                     var prevRT = RenderTexture.active; RenderTexture.active = rt;
                     var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
