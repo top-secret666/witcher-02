@@ -53,8 +53,14 @@ public class HorseRideRig : MonoBehaviour
 
     [Header("Sky")] public float skyBobAmount = 0.05f;
 
-    [Header("Fog (optional T_Ride_Fog)")]
+    [Header("Fog (procedural dithered pixel fog)")]
     public bool buildFog = true;
+    public Color fogColor = new Color(0.78f, 0.72f, 0.68f, 1f);
+    [Tooltip("Fog pixel grid (texture width in pixels)")] public int fogTexWidth = 240;
+    [Tooltip("Aerial perspective: haze in front of castle / right cliffs / spires")] public float[] layerFogAlpha = { 0.55f, 0.38f, 0.26f, 0f };
+    [Tooltip("Horizontal drift speed of the fog (uv per second)")] public float fogDrift = 0.008f;
+    [Range(0, 1)] public float groundMistAlpha = 0.5f;
+    [Tooltip("Old T_Ride_Fog texture sheets (legacy)")] public bool useLegacyFogTexture = false;
     [Range(0, 1)] public float fogAlpha = 0.35f;
     public float fogEndScale = 1.6f;
 
@@ -156,12 +162,16 @@ public class HorseRideRig : MonoBehaviour
             if (!tex) { Debug.LogWarning("HorseRideRig: missing Resources/Ride/" + L.textureName); continue; }
             L.a = MakeImage("L" + li + "_" + L.textureName + "_A", tex, _world); SetPivotToVP(L.a.rectTransform);
             if (L.crossfade) { L.b = MakeImage("L" + li + "_" + L.textureName + "_B", tex, _world); SetPivotToVP(L.b.rectTransform); }
-            if (fog && li == 3) AddFog(fog, 0f);
-            if (fog && li == 4) AddFog(fog, 0.5f);
+            if (useLegacyFogTexture && fog && li == 3) AddFog(fog, 0f);
+            if (useLegacyFogTexture && fog && li == 4) AddFog(fog, 0.5f);
+            int fi = li - 2;
+            if (buildFog && fi < layerFogAlpha.Length && layerFogAlpha[fi] > 0f)
+                AddFogSheet("Haze_" + L.textureName, 0.60f - fi * 0.05f, 0.16f + fi * 0.03f, layerFogAlpha[fi], fogDrift * (1f + fi * 0.6f), fi * 37);
             li++;
         }
 
         if (buildPath) BuildPath();
+        if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", 0.30f, 0.12f, groundMistAlpha, fogDrift * 3f, 911);
 
         if (buildSnow)
         {
@@ -187,6 +197,42 @@ public class HorseRideRig : MonoBehaviour
                 rt.sizeDelta = new Vector2(h * htex.width / (float)htex.height, h);
             }
         }
+    }
+
+    readonly List<(RawImage img, float speed, float alpha)> _fogSheets = new List<(RawImage, float, float)>();
+    static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+
+    // Builds a full-screen dithered pixel fog band: vertical centre/height in screen fractions (from bottom).
+    void AddFogSheet(string name, float centerY, float height, float alpha, float speed, int seed)
+    {
+        int W = Mathf.Max(32, fogTexWidth), H = Mathf.RoundToInt(W * referenceResolution.y / referenceResolution.x);
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat, filterMode = filter };
+        var px = new Color32[W * H];
+        Color32 fc = fogColor;
+        for (int y = 0; y < H; y++)
+        {
+            float fy = (float)y / H;
+            float band = Mathf.Exp(-Mathf.Pow((fy - centerY) / Mathf.Max(0.01f, height), 2f));
+            for (int x = 0; x < W; x++)
+            {
+                // tileable fbm along x (wraps every W)
+                float a = (float)x / W * Mathf.PI * 2f;
+                float n = 0f, amp = 0.55f, f = 1f;
+                for (int o = 0; o < 4; o++)
+                {
+                    n += amp * Mathf.PerlinNoise(seed + Mathf.Cos(a) * 3f * f, seed * 0.37f + Mathf.Sin(a) * 3f * f + fy * 9f * f);
+                    amp *= 0.5f; f *= 2f;
+                }
+                float d = Mathf.Clamp01(band * (0.35f + n * 1.1f));
+                // 4 alpha levels, ordered (Bayer) dither between them => pixel-art fog
+                float q = d * 4f + (Bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16f - 0.5f;
+                int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 4);
+                px[y * W + x] = new Color32(fc.r, fc.g, fc.b, (byte)(lvl * 255 / 4));
+            }
+        }
+        t.SetPixels32(px); t.Apply(false);
+        var img = MakeImage(name, t, _world); img.color = new Color(1, 1, 1, alpha);
+        _fogSheets.Add((img, speed, alpha));
     }
 
     void AddFog(Texture2D fog, float phase)
@@ -313,6 +359,13 @@ public class HorseRideRig : MonoBehaviour
             var rt = f.img.rectTransform; float s = Mathf.Lerp(1f, fogEndScale, p);
             rt.localScale = new Vector3(s, s, 1); rt.anchoredPosition = bob * 0.4f;
             var c = grade; c.a = fogAlpha * Mathf.Sin(p * Mathf.PI); f.img.color = c;
+        }
+
+        for (int i = 0; i < _fogSheets.Count; i++)
+        {
+            var f = _fogSheets[i];
+            var r = f.img.uvRect; r.x = Mathf.Repeat(Time.time * f.speed + _t * 0.01f * (i + 1), 1f); f.img.uvRect = r;
+            f.img.rectTransform.anchoredPosition = bob * (0.15f + 0.2f * i);
         }
 
         if (_path)
