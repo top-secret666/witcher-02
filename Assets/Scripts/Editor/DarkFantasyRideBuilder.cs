@@ -85,15 +85,22 @@ public static class DarkFantasyRideBuilder
         Debug.Log("DarkFantasyRideBuilder: HorseRide scene built. Press Play (W forward, D right).");
     }
 
-    // ---- Preview: renders a few frames of the ride to <project>/Backup/preview_*.png (works in batch mode too)
+    // ---- Preview: renders a few frames of the ride at 9:16 and 16:9 to <project>/Backup/preview_<aspect>_*.png (works in batch mode too)
     [MenuItem("Tools/Dark Fantasy Ride/Render Preview Frames")]
     public static void RenderPreview()
+    {
+        RenderPreview(9f / 16f, "9x16");
+        RenderPreview(16f / 9f, "16x9");
+    }
+
+    public static void RenderPreview(float aspect, string tag)
     {
         string root = Directory.GetParent(Application.dataPath).FullName;
         string outDir = Path.Combine(root, "Backup");
         Directory.CreateDirectory(outDir);
         var rig = new GameObject("__PreviewRig").AddComponent<HorseRideRig>();
         rig.postProfile = AssetDatabase.LoadAssetAtPath<VolumeProfile>(ProfilePath);
+        rig.forceAspect = aspect;
         try
         {
             rig.Build();
@@ -110,13 +117,13 @@ public static class DarkFantasyRideBuilder
                     var cam = rig.RenderCamera;
                     var rt = rig.PixelTarget;
                     bool tmp = rt == null;
-                    if (tmp) { rt = new RenderTexture(540, 960, 24); cam.targetTexture = rt; }
+                    if (tmp) { rt = new RenderTexture(Mathf.RoundToInt(960 * aspect), 960, 24); cam.targetTexture = rt; }
                     cam.Render();
                     var prev = RenderTexture.active; RenderTexture.active = rt;
                     var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
                     tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); tex.Apply();
                     RenderTexture.active = prev;
-                    File.WriteAllBytes(Path.Combine(outDir, "preview_" + f + ".png"), tex.EncodeToPNG());
+                    File.WriteAllBytes(Path.Combine(outDir, "preview_" + tag + "_" + f + ".png"), tex.EncodeToPNG());
                     Object.DestroyImmediate(tex);
                     if (tmp) { cam.targetTexture = null; rt.Release(); }
                     idx++;
@@ -130,7 +137,7 @@ public static class DarkFantasyRideBuilder
             Object.DestroyImmediate(rig.gameObject);
             foreach (var v in Object.FindObjectsByType<Volume>()) if (v.name.Contains("(runtime)")) Object.DestroyImmediate(v.gameObject);
         }
-        Debug.Log("DarkFantasyRideBuilder: preview frames written to " + outDir);
+        Debug.Log("DarkFantasyRideBuilder: " + tag + " preview frames written to " + outDir);
     }
 
     // Batch entry: Unity -batchmode -projectPath <p> -executeMethod DarkFantasyRideBuilder.BatchBuildAndPreview -quit

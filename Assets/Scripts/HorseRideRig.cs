@@ -65,6 +65,7 @@ public class HorseRideRig : MonoBehaviour
     public Color grade = Color.white;
     [Tooltip("Seconds of riding to get ~63% of the way to Approach layers' max scale")] public float approachSeconds = 45f;
     [Tooltip("Horizontal mirrored overscan on each side (fraction of width) so panning never shows an edge")] public float overscan = 0.35f;
+    [Tooltip("0 = fill whatever the Game view / screen is (any aspect, no black bars). >0 forces an aspect (width/height), e.g. 0.5625 = 9:16, 1.7778 = 16:9.")] public float forceAspect = 0f;
 
     [Header("Sky")]
     public float skyBobAmount = 0.05f;
@@ -207,6 +208,30 @@ public class HorseRideRig : MonoBehaviour
     readonly List<Crow> _crows = new List<Crow>();
     Texture2D _crowUp, _crowDown;
 
+    // aspect handling: the 9:16 design area (world) stays centred; everything that must reach the screen edges extends sideways
+    float _aspect = 0.5625f, _extraPx;     // extra canvas px on each side beyond the 1080-wide design area
+    const float WorldW = 1160f;            // design width + 2*40 bob margin
+    float LayerExt => (Mathf.Max(0f, overscan) * referenceResolution.x + _extraPx) / WorldW;   // layer rect extension per side, in world widths
+    float EdgeExt => (_extraPx + 60f) / WorldW;                                                 // fog / path / rays extension per side
+    readonly Dictionary<Texture2D, bool> _edgeOpaque = new Dictionary<Texture2D, bool>();
+
+    /// <summary>Destroys everything Build() made and builds again (used when the screen aspect changes).</summary>
+    public void Rebuild()
+    {
+        if (_cam && _cam.targetTexture == _rt) _cam.targetTexture = null;
+        if (_rt) { _rt.Release(); if (Application.isPlaying) Destroy(_rt); else DestroyImmediate(_rt); _rt = null; }
+        for (int i = transform.childCount - 1; i >= 0; i--)
+        {
+            var go = transform.GetChild(i).gameObject;
+            go.SetActive(false);
+            if (Application.isPlaying) Destroy(go); else DestroyImmediate(go);
+        }
+        _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _dust.Clear();
+        _sky = _path = _horse = _rays = null; _pineGroup = null; _displayCam = null;
+        foreach (var L in layers) { L.a = L.b = null; L.group = null; }
+        Build();
+    }
+
     public RenderTexture PixelTarget => _rt;
     public Camera RenderCamera => _cam;
 
@@ -244,17 +269,41 @@ public class HorseRideRig : MonoBehaviour
         return rt;
     }
 
-    // Full-frame rect widened by mirrored overscan; pivot at the vanishing point so scaling zooms toward it.
+    // Layer rect = world rect widened by overscan + the extra screen width; pivot at the vanishing point so scaling zooms toward it.
+    // Textures may be wider than 9:16 (e.g. the 3x sky): the centre 9:16 part is the design area, the rest fills wide screens.
+    // Beyond the texture: transparent-edged sprites clamp to nothing, opaque edges mirror (no stretching, no hard edge).
     void SetupLayerRect(RawImage img)
     {
         var rt = img.rectTransform;
-        float ov = Mathf.Max(0f, overscan);
-        float w = referenceResolution.x;
+        float e = LayerExt;
         rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
-        rt.offsetMin = new Vector2(-ov * w, 0); rt.offsetMax = new Vector2(ov * w, 0);
-        rt.pivot = new Vector2((vanishingPoint.x + ov) / (1f + 2f * ov), vanishingPoint.y);
-        img.uvRect = new Rect(-ov, 0f, 1f + 2f * ov, 1f);
-        if (img.texture is Texture2D t) { t.wrapModeU = TextureWrapMode.Mirror; t.wrapModeV = TextureWrapMode.Clamp; }
+        rt.offsetMin = new Vector2(-e * WorldW, 0); rt.offsetMax = new Vector2(e * WorldW, 0);
+        rt.pivot = new Vector2((vanishingPoint.x + e) / (1f + 2f * e), vanishingPoint.y);
+        float k = 1f;
+        if (img.texture is Texture2D t)
+        {
+            float designW = t.height * referenceResolution.x / referenceResolution.y;
+            k = Mathf.Min(1f, designW / t.width);
+            t.wrapModeU = EdgesOpaque(t) ? TextureWrapMode.Mirror : TextureWrapMode.Clamp; t.wrapModeV = TextureWrapMode.Clamp;
+        }
+        img.uvRect = new Rect(0.5f - (0.5f + e) * k, 0f, (1f + 2f * e) * k, 1f);
+    }
+
+    // design-space u (0..1 across the world rect) -> anchor inside a layer rect made by SetupLayerRect
+    float LayerAnchorX(float u) { float e = LayerExt; return (u + e) / (1f + 2f * e); }
+
+    bool EdgesOpaque(Texture2D t)
+    {
+        if (_edgeOpaque.TryGetValue(t, out bool v)) return v;
+        v = true;
+        try
+        {
+            int n = 0, H = t.height;
+            for (int y = 0; y < H; y += 2) { if (t.GetPixel(0, y).a > 0.1f) n++; if (t.GetPixel(t.width - 1, y).a > 0.1f) n++; }
+            v = n > 4;
+        }
+        catch { }
+        _edgeOpaque[t] = v; return v;
     }
 
     // ------------------------------------------------------------------ build
@@ -274,12 +323,12 @@ public class HorseRideRig : MonoBehaviour
 
         if (pixelHeight > 0)
         {
-            int h = pixelHeight, w = Mathf.RoundToInt(h * referenceResolution.x / referenceResolution.y);
+            int h = pixelHeight, w = Mathf.Max(16, Mathf.RoundToInt(h * _aspect));
             _rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { name = "RidePixelRT", filterMode = FilterMode.Point, antiAliasing = 1 };
             _rt.Create();
             _cam.targetTexture = _rt;
 
-            // A display camera + overlay canvas shows the low-res frame, upscaled with hard pixels and letterboxed.
+            // A display camera + overlay canvas shows the low-res frame, upscaled with hard pixels; RT aspect = screen aspect, so it fills the screen.
             var dgo = new GameObject("RideDisplayCamera", typeof(Camera));
             dgo.transform.SetParent(transform, false);
             _displayCam = dgo.GetComponent<Camera>();
@@ -293,7 +342,7 @@ public class HorseRideRig : MonoBehaviour
             var oc = ogo.GetComponent<Canvas>(); oc.renderMode = RenderMode.ScreenSpaceOverlay; oc.sortingOrder = 100;
             var img = MakeImage("Frame", _rt, (RectTransform)ogo.transform); img.color = Color.white;
             var fit = img.gameObject.AddComponent<AspectRatioFitter>();
-            fit.aspectMode = AspectRatioFitter.AspectMode.FitInParent; fit.aspectRatio = referenceResolution.x / referenceResolution.y;
+            fit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent; fit.aspectRatio = _aspect;
         }
 
         canvas.renderMode = RenderMode.ScreenSpaceCamera;
@@ -318,17 +367,20 @@ public class HorseRideRig : MonoBehaviour
         canvasGo.layer = 5;
         canvasGo.transform.SetParent(transform, false);
         var c = canvasGo.GetComponent<Canvas>();
+        _aspect = forceAspect > 0f ? forceAspect : (Screen.height > 0 ? (float)Screen.width / Screen.height : 0.5625f);
+        _extraPx = Mathf.Max(0f, (referenceResolution.y * _aspect - referenceResolution.x) * 0.5f);
         SetupCamera(c);
         SetupVolume();
         var cs = canvasGo.GetComponent<CanvasScaler>();
         cs.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; cs.referenceResolution = referenceResolution; cs.matchWidthOrHeight = 1f;
 
         var bg = MakeImage("Bg", Texture2D.whiteTexture, (RectTransform)canvasGo.transform); bg.color = Color.black;
-        var frame = new GameObject("Frame9x16", typeof(RectTransform), typeof(RectMask2D)); frame.layer = 5;
+        var frame = new GameObject("Frame", typeof(RectTransform), typeof(RectMask2D)); frame.layer = 5;
         _root = (RectTransform)frame.transform; _root.SetParent(canvasGo.transform, false);
-        _root.anchorMin = _root.anchorMax = new Vector2(0.5f, 0.5f); _root.sizeDelta = referenceResolution;
+        _root.anchorMin = Vector2.zero; _root.anchorMax = Vector2.one; _root.offsetMin = _root.offsetMax = Vector2.zero;   // whole screen
+        // 9:16 design area (+40 px bob margin), centred; wider screens are filled by the layers' sideways extension
         _world = MakeGroup("World", _root);
-        _world.offsetMin = new Vector2(-40, -40); _world.offsetMax = new Vector2(40, 40); // overscan for bob/roll
+        _world.anchorMin = _world.anchorMax = new Vector2(0.5f, 0.5f); _world.sizeDelta = referenceResolution + new Vector2(80f, 80f);
 
         // Sky + moon glow
         _skyGroup = MakeGroup("L1_SkyGroup", _world);
@@ -397,17 +449,17 @@ public class HorseRideRig : MonoBehaviour
         var img = MakeImage("MoonGlow", t, _sky.rectTransform); img.color = moonGlowColor;
         var rt = img.rectTransform;
         // moonPos is in texture space; the sky rect has mirrored overscan, convert to rect space
-        float ov = Mathf.Max(0f, overscan);
-        var p = new Vector2((moonPos.x + ov) / (1f + 2f * ov), moonPos.y);
+        var p = new Vector2(LayerAnchorX(moonPos.x), moonPos.y);
         rt.anchorMin = rt.anchorMax = p; rt.sizeDelta = Vector2.one * moonGlowSize; rt.pivot = new Vector2(0.5f, 0.5f);
     }
 
     void BuildMoonRays()
     {
-        int W = 135, H = 240;
+        float ex = EdgeExt;
+        int H = 240, W = Mathf.RoundToInt(135 * (1f + 2f * ex));
         var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp };
         var px = new Color32[W * H];
-        var src = new Vector2(moonPos.x * W, moonPos.y * H);
+        var src = new Vector2((moonPos.x + ex) / (1f + 2f * ex) * W, moonPos.y * H);
         float[] beams = { -2.05f, -1.85f, -1.62f, -1.35f, -1.12f };
         float[] widths = { 0.02f, 0.04f, 0.018f, 0.03f, 0.02f };
         for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
@@ -422,6 +474,7 @@ public class HorseRideRig : MonoBehaviour
         }
         t.SetPixels32(px); t.Apply(false);
         _rays = MakeImage("MoonRays", t, _world); _rays.color = new Color(1, 1, 1, moonRayAlpha);
+        _rays.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); _rays.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
     }
 
     void BuildCrows()
@@ -480,6 +533,9 @@ public class HorseRideRig : MonoBehaviour
         }
         t.SetPixels32(px); t.Apply(false);
         var img = MakeImage(name, t, _world); img.color = new Color(1, 1, 1, alpha);
+        float ex = EdgeExt;
+        img.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); img.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
+        img.uvRect = new Rect(0f, 0f, 1f + 2f * ex, 1f);
         _fogSheets.Add((img, speed, steer));
     }
 
@@ -503,12 +559,11 @@ public class HorseRideRig : MonoBehaviour
     void BuildSmoke()
     {
         var tex = MakePuffTex();
-        float ov = Mathf.Max(0f, overscan);
         foreach (var e in smokeEmitters)
         {
             int li = (int)e.z; if (li < 0 || li >= layers.Count) continue;
             var L = layers[li]; if (!L.enabled || !L.a) continue;
-            var anchor = new Vector2((e.x + ov) / (1f + 2f * ov), e.y);
+            var anchor = new Vector2(LayerAnchorX(e.x), e.y);
             foreach (var host in new[] { L.a, L.b })
             {
                 if (!host) continue;
@@ -585,6 +640,7 @@ public class HorseRideRig : MonoBehaviour
     void UpdateMotes(float travel, Vector2 bob, float steerPx)
     {
         var size = referenceResolution;
+        float widen = (referenceResolution.x + 2f * _extraPx) / referenceResolution.x;
         foreach (var m in _motes)
         {
             m.p.z -= travel * 0.22f * m.speed;
@@ -599,7 +655,7 @@ public class HorseRideRig : MonoBehaviour
             float inv = 1f / Mathf.Max(0.05f, m.p.z);
             float nearness = Mathf.Clamp01(1f - m.p.z);
             var rt = m.img.rectTransform;
-            Vector2 pos = new Vector2(m.p.x * size.x * 0.32f, m.p.y * size.y * 0.22f) * inv;
+            Vector2 pos = new Vector2(m.p.x * size.x * 0.32f * widen, m.p.y * size.y * 0.22f) * inv;
             pos += bob * (0.3f + 0.6f * nearness) - new Vector2(steerPx * (0.2f + 0.8f * nearness), 0);
             rt.anchoredPosition = new Vector2(Mathf.Round(pos.x / 3f) * 3f, Mathf.Round(pos.y / 3f) * 3f);
             float s = Mathf.Max(3f, Mathf.Round(m.size * (0.5f + inv * 0.35f) / 3f) * 3f);
@@ -619,7 +675,7 @@ public class HorseRideRig : MonoBehaviour
             c.x += c.speed * dt; c.phase += dt * 2.2f;
             if (c.x > 1.2f) RespawnCrow(c, false);
             var rt = c.img.rectTransform;
-            rt.anchoredPosition = new Vector2(c.x * referenceResolution.x, (c.y + Mathf.Sin(c.phase * 0.7f) * 0.01f) * referenceResolution.y);
+            rt.anchoredPosition = new Vector2(c.x * (WorldW + 2f * _extraPx) - _extraPx, (c.y + Mathf.Sin(c.phase * 0.7f) * 0.01f) * referenceResolution.y);
             rt.sizeDelta = new Vector2(9f, 4f) * 4f * c.scale;
             c.img.texture = Mathf.Repeat(c.phase, 1f) < 0.5f ? _crowUp : _crowDown;
         }
@@ -669,7 +725,7 @@ public class HorseRideRig : MonoBehaviour
             float h = Mathf.Lerp(pineHeight.x, pineHeight.y, r2) / z * stripPx;
             var tex = _pineTex[(int)(r3 * _pineTex.Count) % _pineTex.Count];
             float w = h * tex.width / tex.height;
-            bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f && xf * stripW - w < stripW + 40f;
+            bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f - _extraPx && xf * stripW - w < stripW + 40f + _extraPx;
             p.img.enabled = visible;
             if (!visible) continue;
             p.img.texture = tex;
@@ -737,13 +793,19 @@ public class HorseRideRig : MonoBehaviour
         try { _src = _pathSrc.GetPixels32(); }
         catch { Debug.LogError("HorseRideRig: T_Ride_Path must be Read/Write enabled (RideTextureImporter does this automatically)"); return; }
         _sw = _pathSrc.width; _sh = _pathSrc.height;
-        _pathOut = new Texture2D(pathTexWidth, pathTexHeight, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter };
-        _dst = new Color32[pathTexWidth * pathTexHeight];
+        // the strip is widened sideways for wide screens; pathTexWidth stays the design-area resolution
+        _pathExt = EdgeExt;
+        _pathW = Mathf.RoundToInt(pathTexWidth * (1f + 2f * _pathExt));
+        _pathOut = new Texture2D(_pathW, pathTexHeight, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter };
+        _dst = new Color32[_pathW * pathTexHeight];
         _path = MakeImage("L8_Path", _pathOut, _world);
         var rt = _path.rectTransform; rt.anchorMin = Vector2.zero; rt.anchorMax = new Vector2(1f, pathScreenFraction);
-        rt.offsetMin = rt.offsetMax = Vector2.zero; rt.pivot = new Vector2(vanishingPoint.x, 0f);
+        rt.offsetMin = new Vector2(-_pathExt * WorldW, 0); rt.offsetMax = new Vector2(_pathExt * WorldW, 0);
+        rt.pivot = new Vector2((vanishingPoint.x + _pathExt) / (1f + 2f * _pathExt), 0f);
         _path.color = Color.white;
     }
+
+    float _pathExt; int _pathW;
 
     Color32 Sample(float u, float v)
     {
@@ -757,8 +819,9 @@ public class HorseRideRig : MonoBehaviour
 
     void DrawPath(float travel, float curve)
     {
-        int W = pathTexWidth, H = pathTexHeight;
+        int W = _pathW, H = pathTexHeight;
         float hz = pathHorizon * H;
+        float span = 1f + 2f * _pathExt;
         Color32 farC = pathFarColor;
         for (int y = 0; y < H; y++)
         {
@@ -772,10 +835,11 @@ public class HorseRideRig : MonoBehaviour
             float v = (z + travel) / pathTileLength;
             float far = Mathf.Clamp01(dy / Mathf.Max(0.001f, pathFadeFar));
             float fogK = 1f - Mathf.Clamp01(dy / 0.6f); fogK *= fogK;
-            float aspect = (float)W / H;
+            float aspect = (float)pathTexWidth / H;            // design aspect (unchanged look)
             for (int x = 0; x < W; x++)
             {
-                float sx = ((x + 0.5f) / W - vanishingPoint.x) * aspect - vanish * aspect;
+                float xd = (x + 0.5f) / W * span - _pathExt;     // design-space x (0..1 = the 9:16 area)
+                float sx = (xd - vanishingPoint.x) * aspect - vanish * aspect;
                 float u = sx / (halfW * 2f) + 0.5f;
                 if (u < -0.02f || u > 1.02f) { _dst[row + x] = new Color32(0, 0, 0, 0); continue; }
                 var col = Sample(Mathf.Clamp01(u), v);
@@ -802,7 +866,18 @@ public class HorseRideRig : MonoBehaviour
         img.color = c;
     }
 
-    void Update() { Tick(Time.deltaTime); }
+    float _aspectCheck;
+    void Update()
+    {
+        _aspectCheck -= Time.unscaledDeltaTime;
+        if (_aspectCheck <= 0f)
+        {
+            _aspectCheck = 0.25f;
+            float a = forceAspect > 0f ? forceAspect : (Screen.height > 0 ? (float)Screen.width / Screen.height : _aspect);
+            if (Mathf.Abs(a - _aspect) > 0.01f) Rebuild();   // Game view / window resized -> refit to the new aspect
+        }
+        Tick(Time.deltaTime);
+    }
 
     /// <summary>Advances the ride by dt (also used by the editor preview renderer).</summary>
     public void Tick(float dt, float forcedForward = -1f, float forcedSteer = float.NaN)
