@@ -96,6 +96,15 @@ public class HorseRideRig : MonoBehaviour
     public float swayPx = 8f;
     public float rollDegrees = 0.6f;
 
+    [Header("Smoke (procedural pixel puffs)")]
+    public bool buildSmoke = true;
+    [Tooltip("Emitters: x,y = position inside the layer (0..1), z = layer index (0 castle, 1 cliffs right, 2 spires/village, 3 cliff left), w = strength")]
+    public Vector4[] smokeEmitters = { new Vector4(0.86f, 0.52f, 0, 1.2f), new Vector4(0.47f, 0.56f, 0, 0.7f), new Vector4(0.22f, 0.41f, 2, 0.6f), new Vector4(0.31f, 0.40f, 2, 0.6f), new Vector4(0.36f, 0.415f, 2, 0.5f) };
+    public int puffsPerEmitter = 14;
+    public Vector2 wind = new Vector2(0.9f, 1f);
+    public float smokeRise = 70f, smokeLife = 5f, smokeSize = 10f;
+    public Color smokeColor = new Color(0.62f, 0.58f, 0.56f, 0.75f);
+
     [Header("Snow")]
     public bool buildSnow = true;
     public int snowCount = 70;
@@ -170,6 +179,7 @@ public class HorseRideRig : MonoBehaviour
             li++;
         }
 
+        if (buildSmoke) BuildSmoke();
         if (buildPath) BuildPath();
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", 0.30f, 0.12f, groundMistAlpha, fogDrift * 3f, 911);
 
@@ -233,6 +243,63 @@ public class HorseRideRig : MonoBehaviour
         t.SetPixels32(px); t.Apply(false);
         var img = MakeImage(name, t, _world); img.color = new Color(1, 1, 1, alpha);
         _fogSheets.Add((img, speed, alpha));
+    }
+
+    class Puff { public RawImage img; public float phase, seed; public float strength; public ZoomLayer owner; public bool isB; }
+    readonly List<Puff> _puffs = new List<Puff>();
+
+    Texture2D MakePuffTex()
+    {
+        int n = 8; var t = new Texture2D(n, n, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp };
+        for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
+        {
+            float r = Vector2.Distance(new Vector2(x + .5f, y + .5f), new Vector2(n / 2f, n / 2f)) / (n / 2f);
+            float d = Mathf.Clamp01(1.15f - r);
+            float q = d * 2f + (Bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16f - 0.5f;
+            int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 2);
+            t.SetPixel(x, y, new Color(1, 1, 1, lvl / 2f));
+        }
+        t.Apply(); return t;
+    }
+
+    void BuildSmoke()
+    {
+        var tex = MakePuffTex();
+        var active = layers.FindAll(l => l.enabled && l.a);
+        foreach (var e in smokeEmitters)
+        {
+            int li = Mathf.Clamp((int)e.z, 0, active.Count - 1); if (active.Count == 0) return;
+            var L = active[li];
+            foreach (var host in new[] { L.a, L.b })
+            {
+                if (!host) continue;
+                for (int i = 0; i < puffsPerEmitter; i++)
+                {
+                    var img = MakeImage("Smoke", tex, host.rectTransform);
+                    var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(e.x, e.y); rt.pivot = new Vector2(0.5f, 0.5f);
+                    _puffs.Add(new Puff { img = img, phase = (float)i / puffsPerEmitter, seed = Random.value * 100f, strength = e.w, owner = L, isB = host == L.b });
+                }
+            }
+        }
+    }
+
+    void UpdateSmoke()
+    {
+        float life = Mathf.Max(0.5f, smokeLife);
+        foreach (var p in _puffs)
+        {
+            float a = Mathf.Repeat(Time.time / life + p.phase, 1f);          // 0 born .. 1 dissolved
+            float wob = Mathf.Sin((Time.time + p.seed) * 1.3f) * 4f * a;
+            var rt = p.img.rectTransform;
+            rt.anchoredPosition = new Vector2((wind.x * smokeRise * a * a * 1.6f + wob), (wind.y * smokeRise * a)) * p.strength;
+            float sz = smokeSize * p.strength * (0.6f + a * 2.4f);
+            sz = Mathf.Round(sz / 4f) * 4f;                                    // snap growth to the pixel grid
+            rt.sizeDelta = new Vector2(sz, sz);
+            var host = p.isB ? p.owner.b : p.owner.a;
+            float hostA = host ? host.color.a : 1f;
+            var c = smokeColor; c.a *= Smooth(0f, 0.12f, a) * (1f - Smooth(0.45f, 1f, a)) * hostA;
+            p.img.color = c;
+        }
     }
 
     void AddFog(Texture2D fog, float phase)
@@ -367,6 +434,8 @@ public class HorseRideRig : MonoBehaviour
             var r = f.img.uvRect; r.x = Mathf.Repeat(Time.time * f.speed + _t * 0.01f * (i + 1), 1f); f.img.uvRect = r;
             f.img.rectTransform.anchoredPosition = bob * (0.15f + 0.2f * i);
         }
+
+        UpdateSmoke();
 
         if (_path)
         {
