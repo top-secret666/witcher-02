@@ -69,6 +69,8 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Tiles travelled per loop (integer = seamless)")] public int pathTilesPerLoop = 2;
     [Tooltip("Path centre x offset toward the vanishing point (−0.5..0.5 of strip width at horizon)")] public float pathVanishX = 0f;
     public float pathFadeNear = 0.0f, pathFadeFar = 0.35f;
+    [Tooltip("How far the road bends sideways at the horizon (fraction of strip width). Negative = bends left")] public float pathCurve = -0.32f;
+    [Tooltip("Curve shape: 1 = linear, 2 = smooth arc, 3 = bends late")] public float pathCurvePower = 2.2f;
     public Color pathTint = new Color(0.85f, 0.85f, 0.9f, 1f);
     public float pathBobAmount = 0.9f;
 
@@ -244,6 +246,7 @@ public class HorseRideRig : MonoBehaviour
             float z = cameraHeight / dy;                 // world distance of this row
             float halfW = pathWorldWidth * 0.5f / z;     // half road width in strip-height units
             float vanish = Mathf.Lerp(pathVanishX, 0f, Mathf.Clamp01(dy)); // road bends toward VP at distance
+            vanish += pathCurve * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower); // curve: lateral offset grows with distance (depth-only => seamless both ways)
             float v = (z + travel) / pathTileLength;
             float far = Mathf.Clamp01(dy / Mathf.Max(0.001f, pathFadeFar));    // fade out toward horizon
             float aspect = (float)W / H;
