@@ -90,11 +90,23 @@ public class HorseRideRig : MonoBehaviour
     public float earTwitchDegrees = 1.2f;
 
     [Header("Camera bob (gallop)")]
-    public float bobBeatsPerSecond = 2.5f;
+    [Tooltip("Legacy fields (kept for inspector compatibility)")] public float bobBeatsPerSecond = 2.5f;
     public float bobPx = 18f;
     [Tooltip(">1 = sharper downward impact")] public float impactSharpness = 2.2f;
     public float swayPx = 8f;
     public float rollDegrees = 0.6f;
+
+    [Header("Gait (walk -> 3-beat canter, driven by speed)")]
+    [Tooltip("Strides per second when walking / cantering")] public float walkStrideHz = 0.95f, canterStrideHz = 1.75f;
+    [Tooltip("Speed fraction where walk turns into canter")] public Vector2 canterBlend = new Vector2(0.35f, 0.75f);
+    [Tooltip("Vertical camera travel in px: walk / canter")] public float walkBobPx = 6f, canterBobPx = 26f;
+    [Tooltip("Forward pitch nod in px (horizon dips when forelegs land)")] public float pitchPx = 10f;
+    [Tooltip("Lateral sway in px (half stride frequency)")] public float gaitSwayPx = 9f;
+    public float gaitRollDegrees = 0.8f;
+    [Tooltip("Neck pump in px (opposite-ish to camera)")] public float neckPumpPx = 16f;
+    [Range(0, 1)] public float neckPhase = 0.55f;
+    public float neckNodDegrees = 1.4f;
+    [Tooltip("Ear twitch: random interval range (s)")] public Vector2 earTwitchInterval = new Vector2(1.5f, 4.5f);
 
     [Header("Smoke (procedural pixel puffs)")]
     public bool buildSmoke = true;
@@ -118,7 +130,7 @@ public class HorseRideRig : MonoBehaviour
     int _sw, _sh;
     readonly List<(RawImage img, Vector2 dir, float phase, float speed)> _snow = new List<(RawImage, Vector2, float, float)>();
     readonly List<(RawImage img, float phase)> _fog = new List<(RawImage, float)>();
-    float _t, _bobT, _speed, _bobAmp;
+    float _t, _bobT, _speed, _bobAmp, _gaitW, _stride, _earTimer = 2f, _earT = 1f;
 
     void Start() { Build(); }
 
@@ -401,14 +413,27 @@ public class HorseRideRig : MonoBehaviour
         _t += dt * _speed;                                   // scene time: reverses with S, stops with no input
         float aspd = Mathf.Abs(_speed);
         _bobT += dt * Mathf.Lerp(0.5f, 1f, Mathf.Clamp01(aspd));
-        _bobAmp = Mathf.MoveTowards(_bobAmp, Mathf.Clamp01(aspd / Mathf.Max(0.01f, forwardSpeed)), dt * 2.5f);
+        _bobAmp = Mathf.MoveTowards(_bobAmp, Mathf.Clamp01(3f * aspd / Mathf.Max(0.01f, forwardSpeed)), dt * 2f);
         float loopT = Mathf.Repeat(_t, loopDuration) / loopDuration;
 
-        // gallop bob: sharp downward impact, slow rise; amplitude follows speed so it settles when stopped
-        float beat = Mathf.Repeat(_bobT * bobBeatsPerSecond, 1f);
-        float down = Mathf.Pow(Mathf.Sin(beat * Mathf.PI), impactSharpness);
-        Vector2 bob = new Vector2(Mathf.Sin(_bobT * bobBeatsPerSecond * Mathf.PI) * swayPx, -down * bobPx + bobPx * 0.5f) * _bobAmp;
-        if (_world) _world.localEulerAngles = new Vector3(0, 0, Mathf.Sin(_bobT * bobBeatsPerSecond * Mathf.PI) * rollDegrees * _bobAmp);
+        // ---- realistic gait ----
+        float sNorm = Mathf.Clamp01(aspd / Mathf.Max(0.01f, forwardSpeed));
+        float canterT = _speed < 0f ? 0f : Smooth(canterBlend.x, canterBlend.y, sNorm);   // reverse = walk-back
+        _gaitW = Mathf.MoveTowards(_gaitW, canterT, dt * 1.5f);                            // smooth gait transition
+        float strideHz = Mathf.Lerp(walkStrideHz, canterStrideHz, _gaitW) * Mathf.Lerp(0.75f, 1f, sNorm);
+        _stride += dt * strideHz * (aspd > 0.0005f || _bobAmp > 0.01f ? 1f : 0f);
+        float ph = Mathf.Repeat(_stride, 1f);
+        float walkV = WalkCurve(ph), canterV = CanterCurve(ph);
+        float vert = Mathf.Lerp(walkV * walkBobPx, canterV * canterBobPx, _gaitW);
+        float pitch = Mathf.Lerp(0.3f, 1f, _gaitW) * pitchPx * CanterPitch(ph);
+        float sway = Mathf.Sin(_stride * Mathf.PI) * gaitSwayPx * Mathf.Lerp(1f, 0.7f, _gaitW);   // half frequency
+        Vector2 bob = new Vector2(sway, vert + pitch) * _bobAmp;
+        if (_world)
+        {
+            _world.localEulerAngles = new Vector3(0, 0, Mathf.Sin(_stride * Mathf.PI + 0.6f) * gaitRollDegrees * _bobAmp);
+            float sc = 1f + 0.004f * pitch / Mathf.Max(1f, pitchPx) * _bobAmp;
+            _world.localScale = new Vector3(sc, sc, 1f);
+        }
 
         if (_sky) _sky.rectTransform.anchoredPosition = bob * skyBobAmount;
 
@@ -454,18 +479,41 @@ public class HorseRideRig : MonoBehaviour
 
         if (_horse)
         {
-            float hb = (beat + horseBobPhase) % 1f;
-            float hd = Mathf.Pow(Mathf.Sin(hb * Mathf.PI), impactSharpness) * _bobAmp;
+            // neck pumps against the camera: head drops as forelegs land, lifts in suspension
+            float nph = Mathf.Repeat(ph - neckPhase, 1f);
+            float pump = Mathf.Lerp(Mathf.Sin(nph * Mathf.PI * 4f) * 0.35f, Mathf.Cos(nph * Mathf.PI * 2f), _gaitW);
             var rt = _horse.rectTransform;
-            rt.anchoredPosition = new Vector2(bob.x * 0.6f, -hd * horseBobPx + horseBobPx * 0.3f);
-            float twitch = 0f;
-            if (earTwitchEvery > 0f)
-            {
-                float tp = Mathf.Repeat(Time.time, earTwitchEvery) / earTwitchEvery;
-                if (tp < 0.08f) twitch = Mathf.Sin(tp / 0.08f * Mathf.PI * 2f) * earTwitchDegrees;
-            }
-            rt.localEulerAngles = new Vector3(0, 0, Mathf.Sin(hb * Mathf.PI * 2f) * horseNodDegrees * _bobAmp + twitch);
+            rt.anchoredPosition = new Vector2(bob.x * 0.55f, -bob.y * 0.35f + pump * neckPumpPx * _bobAmp);
+            _earTimer -= dt;
+            if (_earTimer <= 0f) { _earTimer = Random.Range(earTwitchInterval.x, earTwitchInterval.y); _earT = 0f; }
+            _earT += dt;
+            float twitch = _earT < 0.25f ? Mathf.Sin(_earT / 0.25f * Mathf.PI * 2f) * earTwitchDegrees : 0f;
+            rt.localEulerAngles = new Vector3(0, 0, Mathf.Sin(nph * Mathf.PI * 2f) * neckNodDegrees * _bobAmp + twitch);
+            float sy = 1f + 0.012f * twitch / Mathf.Max(0.01f, earTwitchDegrees);
+            rt.localScale = new Vector3(1f, sy, 1f);
         }
+    }
+
+    // asymmetric footfall dip: fast drop, slower recovery
+    static float Dip(float x, float wDown, float wUp)
+    {
+        x = x - Mathf.Round(x); // wrap to -0.5..0.5
+        float w = x < 0f ? wDown : wUp;
+        return Mathf.Exp(-(x / w) * (x / w));
+    }
+    // 3-beat canter: hind (0.0), diagonal pair (0.22, strongest), leading fore (0.40), suspension ~0.7
+    static float CanterCurve(float p)
+    {
+        float v = -0.55f * Dip(p - 0.00f, 0.035f, 0.09f) - 1.0f * Dip(p - 0.22f, 0.03f, 0.10f) - 0.75f * Dip(p - 0.40f, 0.03f, 0.12f)
+                  + 0.55f * Dip(p - 0.72f, 0.16f, 0.16f);
+        return v;
+    }
+    // forward pitch: horizon dips after the leading fore lands
+    static float CanterPitch(float p) { return -Dip(p - 0.45f, 0.06f, 0.14f) + 0.4f * Dip(p - 0.05f, 0.08f, 0.12f); }
+    // 4-beat walk: four soft equal steps
+    static float WalkCurve(float p)
+    {
+        return -(Dip(p, 0.06f, 0.1f) + Dip(p - 0.25f, 0.06f, 0.1f) + Dip(p - 0.5f, 0.06f, 0.1f) + Dip(p - 0.75f, 0.06f, 0.1f)) * 0.5f + 0.35f;
     }
 
     static float ReadAxis()
