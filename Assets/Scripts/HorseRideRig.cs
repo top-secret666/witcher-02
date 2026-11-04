@@ -5,6 +5,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 [DisallowMultipleComponent]
 public class HorseRideRig : MonoBehaviour
@@ -24,19 +27,28 @@ public class HorseRideRig : MonoBehaviour
         [HideInInspector] public RawImage a, b;
     }
 
+    [Header("Control (W forward / S backward)")]
+    public bool requireInput = true;
+    [Tooltip("Max forward playback speed (1 = reference video speed)")] public float forwardSpeed = 1f;
+    [Tooltip("Max backward playback speed")] public float backwardSpeed = 0.6f;
+    [Tooltip("Speed change per second when accelerating")] public float acceleration = 1.2f;
+    [Tooltip("Speed change per second when stopping")] public float deceleration = 1.6f;
+    [Header("Pixel look")]
+    public FilterMode filter = FilterMode.Point;
+
     [Header("Loop")]
     public float loopDuration = 4f;
-    [Tooltip("Vanishing point in normalized screen coords (0..1)")] public Vector2 vanishingPoint = new Vector2(0.44f, 0.56f);
+    [Tooltip("Vanishing point in normalized screen coords (0..1)")] public Vector2 vanishingPoint = new Vector2(0.46f, 0.42f);
     public Vector2 referenceResolution = new Vector2(1080, 1920);
-    public Color grade = new Color(0.92f, 0.9f, 0.86f, 1f);
+    public Color grade = Color.white;
 
     [Header("Layers (back to front, excluding sky/path/horse)")]
     public List<ZoomLayer> layers = new List<ZoomLayer>
     {
         new ZoomLayer{ textureName="T_Ride_Castle",      startScale=1.00f, endScale=1.06f, drift=new Vector2(  6,  -4), crossfade=false, bobAmount=0.15f },
         new ZoomLayer{ textureName="T_Ride_CliffsRight", startScale=1.00f, endScale=1.25f, drift=new Vector2( 60, -40), bobAmount=0.35f },
-        new ZoomLayer{ textureName="T_Ride_Spires",      startScale=1.00f, endScale=1.55f, drift=new Vector2(-90, -60), bobAmount=0.55f },
-        new ZoomLayer{ textureName="T_Ride_CliffLeft",   startScale=1.00f, endScale=2.20f, drift=new Vector2(-260,-40), cyclesPerLoop=2, bobAmount=0.8f },
+        new ZoomLayer{ textureName="T_Ride_Spires",      startScale=1.00f, endScale=1.45f, drift=new Vector2(-70, -40), bobAmount=0.55f },
+        new ZoomLayer{ textureName="T_Ride_CliffLeft",   startScale=1.00f, endScale=1.90f, drift=new Vector2(-200,-30), cyclesPerLoop=2, bobAmount=0.8f },
     };
 
     [Header("Sky")] public float skyBobAmount = 0.05f;
@@ -48,21 +60,21 @@ public class HorseRideRig : MonoBehaviour
 
     [Header("Path (CPU perspective road)")]
     public bool buildPath = true;
-    public int pathTexWidth = 360, pathTexHeight = 320;
+    public int pathTexWidth = 240, pathTexHeight = 180;
     [Tooltip("Fraction of screen height the path strip covers from the bottom")] public float pathScreenFraction = 0.42f;
     [Tooltip("Horizon inside the strip (0 bottom .. 1 top)")] public float pathHorizon = 0.98f;
     public float cameraHeight = 1.0f;
-    public float pathWorldWidth = 2.2f;
+    public float pathWorldWidth = 2.4f;
     [Tooltip("Path texture repeats every N world units")] public float pathTileLength = 6f;
     [Tooltip("Tiles travelled per loop (integer = seamless)")] public int pathTilesPerLoop = 2;
-    [Tooltip("Path centre x offset toward the vanishing point (−0.5..0.5 of strip width at horizon)")] public float pathVanishX = -0.06f;
+    [Tooltip("Path centre x offset toward the vanishing point (−0.5..0.5 of strip width at horizon)")] public float pathVanishX = 0f;
     public float pathFadeNear = 0.0f, pathFadeFar = 0.35f;
     public Color pathTint = new Color(0.85f, 0.85f, 0.9f, 1f);
     public float pathBobAmount = 0.9f;
 
     [Header("Horse (foreground)")]
     public bool buildHorse = true;
-    [Tooltip("Horse height as fraction of screen height")] public float horseHeight = 0.42f;
+    [Tooltip("Horse height as fraction of screen height")] public float horseHeight = 0.44f;
     public float horseBobPx = 22f;
     [Range(0, 1)] public float horseBobPhase = 0.35f;
     public float horseNodDegrees = 1.6f;
@@ -89,7 +101,7 @@ public class HorseRideRig : MonoBehaviour
     int _sw, _sh;
     readonly List<(RawImage img, Vector2 dir, float phase, float speed)> _snow = new List<(RawImage, Vector2, float, float)>();
     readonly List<(RawImage img, float phase)> _fog = new List<(RawImage, float)>();
-    float _t;
+    float _t, _bobT, _speed, _bobAmp;
 
     void Start() { Build(); }
 
@@ -101,7 +113,7 @@ public class HorseRideRig : MonoBehaviour
         var rt = (RectTransform)go.transform; rt.SetParent(parent, false);
         rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = rt.offsetMax = Vector2.zero;
         var img = go.GetComponent<RawImage>(); img.texture = tex; img.raycastTarget = false; img.color = grade;
-        if (tex) tex.filterMode = FilterMode.Bilinear;
+        if (tex) tex.filterMode = filter;
         return img;
     }
 
@@ -189,7 +201,7 @@ public class HorseRideRig : MonoBehaviour
             float d = Vector2.Distance(new Vector2(x + .5f, y + .5f), new Vector2(n / 2f, n / 2f)) / (n / 2f);
             t.SetPixel(x, y, new Color(0.9f, 0.92f, 0.95f, Mathf.Clamp01(1f - d) * 0.9f));
         }
-        t.Apply(); t.filterMode = FilterMode.Bilinear; return t;
+        t.Apply(); t.filterMode = filter; return t;
     }
 
     void BuildPath()
@@ -200,7 +212,7 @@ public class HorseRideRig : MonoBehaviour
         catch { Debug.LogError("HorseRideRig: T_Ride_Path must be Read/Write enabled (RideTextureImporter does this automatically)"); return; }
         _sw = _pathSrc.width; _sh = _pathSrc.height;
         _pathOut = new Texture2D(pathTexWidth, pathTexHeight, TextureFormat.RGBA32, false);
-        _pathOut.wrapMode = TextureWrapMode.Clamp; _pathOut.filterMode = FilterMode.Bilinear;
+        _pathOut.wrapMode = TextureWrapMode.Clamp; _pathOut.filterMode = filter;
         _dst = new Color32[pathTexWidth * pathTexHeight];
         _path = MakeImage("L6_Path", _pathOut, _world);
         var rt = _path.rectTransform; rt.anchorMin = Vector2.zero; rt.anchorMax = new Vector2(1f, pathScreenFraction);
@@ -265,21 +277,29 @@ public class HorseRideRig : MonoBehaviour
 
     void Update()
     {
-        _t += Time.deltaTime;
-        float loopT = (_t % loopDuration) / loopDuration;
+        float dt = Time.deltaTime;
+        float target = requireInput ? ReadAxis() : 1f;
+        target = target > 0 ? target * forwardSpeed : target * backwardSpeed;
+        float rate = Mathf.Abs(target) > Mathf.Abs(_speed) && Mathf.Sign(target) == Mathf.Sign(_speed == 0 ? target : _speed) ? acceleration : deceleration;
+        _speed = Mathf.MoveTowards(_speed, target, rate * dt);
+        _t += dt * _speed;                                   // scene time: reverses with S, stops with no input
+        float aspd = Mathf.Abs(_speed);
+        _bobT += dt * Mathf.Lerp(0.5f, 1f, Mathf.Clamp01(aspd));
+        _bobAmp = Mathf.MoveTowards(_bobAmp, Mathf.Clamp01(aspd / Mathf.Max(0.01f, forwardSpeed)), dt * 2.5f);
+        float loopT = Mathf.Repeat(_t, loopDuration) / loopDuration;
 
-        // gallop bob: sharp downward impact, slow rise
-        float beat = (_t * bobBeatsPerSecond) % 1f;
+        // gallop bob: sharp downward impact, slow rise; amplitude follows speed so it settles when stopped
+        float beat = Mathf.Repeat(_bobT * bobBeatsPerSecond, 1f);
         float down = Mathf.Pow(Mathf.Sin(beat * Mathf.PI), impactSharpness);
-        Vector2 bob = new Vector2(Mathf.Sin(_t * bobBeatsPerSecond * Mathf.PI) * swayPx, -down * bobPx + bobPx * 0.5f);
-        if (_world) _world.localEulerAngles = new Vector3(0, 0, Mathf.Sin(_t * bobBeatsPerSecond * Mathf.PI) * rollDegrees);
+        Vector2 bob = new Vector2(Mathf.Sin(_bobT * bobBeatsPerSecond * Mathf.PI) * swayPx, -down * bobPx + bobPx * 0.5f) * _bobAmp;
+        if (_world) _world.localEulerAngles = new Vector3(0, 0, Mathf.Sin(_bobT * bobBeatsPerSecond * Mathf.PI) * rollDegrees * _bobAmp);
 
         if (_sky) _sky.rectTransform.anchoredPosition = bob * skyBobAmount;
 
         foreach (var L in layers)
         {
             if (!L.a) continue;
-            float p = (loopT * Mathf.Max(1, L.cyclesPerLoop)) % 1f;
+            float p = Mathf.Repeat(loopT * Mathf.Max(1, L.cyclesPerLoop), 1f);
             if (L.crossfade && L.b) { ApplyZoom(L.a, p, L, true, bob); ApplyZoom(L.b, (p + 0.5f) % 1f, L, true, bob); }
             else ApplyZoom(L.a, p, L, false, bob);
         }
@@ -300,7 +320,7 @@ public class HorseRideRig : MonoBehaviour
 
         foreach (var s in _snow)
         {
-            float p = (loopT * s.speed * snowSpeed * 4f + s.phase) % 1f;
+            float p = Mathf.Repeat(loopT * Mathf.Round(s.speed * snowSpeed * 4f) + s.phase, 1f);
             float r = p * p * 1400f;
             var rt = s.img.rectTransform; rt.anchoredPosition = s.dir * r + bob * 0.7f + new Vector2(0, -p * 120f);
             float sz = snowSize * (0.3f + p * 2.2f); rt.sizeDelta = new Vector2(sz, sz);
@@ -310,17 +330,30 @@ public class HorseRideRig : MonoBehaviour
         if (_horse)
         {
             float hb = (beat + horseBobPhase) % 1f;
-            float hd = Mathf.Pow(Mathf.Sin(hb * Mathf.PI), impactSharpness);
+            float hd = Mathf.Pow(Mathf.Sin(hb * Mathf.PI), impactSharpness) * _bobAmp;
             var rt = _horse.rectTransform;
             rt.anchoredPosition = new Vector2(bob.x * 0.6f, -hd * horseBobPx + horseBobPx * 0.3f);
             float twitch = 0f;
             if (earTwitchEvery > 0f)
             {
-                float tp = (_t % earTwitchEvery) / earTwitchEvery;
+                float tp = Mathf.Repeat(Time.time, earTwitchEvery) / earTwitchEvery;
                 if (tp < 0.08f) twitch = Mathf.Sin(tp / 0.08f * Mathf.PI * 2f) * earTwitchDegrees;
             }
-            rt.localEulerAngles = new Vector3(0, 0, Mathf.Sin(hb * Mathf.PI * 2f) * horseNodDegrees + twitch);
+            rt.localEulerAngles = new Vector3(0, 0, Mathf.Sin(hb * Mathf.PI * 2f) * horseNodDegrees * _bobAmp + twitch);
         }
+    }
+
+    static float ReadAxis()
+    {
+        float v = 0f;
+#if ENABLE_INPUT_SYSTEM
+        var kb = Keyboard.current;
+        if (kb != null) { if (kb.wKey.isPressed || kb.upArrowKey.isPressed) v += 1f; if (kb.sKey.isPressed || kb.downArrowKey.isPressed) v -= 1f; }
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        if (v == 0f) { if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) v += 1f; if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) v -= 1f; }
+#endif
+        return Mathf.Clamp(v, -1f, 1f);
     }
 
     // Auto-spawn so the scene works even without manual setup.

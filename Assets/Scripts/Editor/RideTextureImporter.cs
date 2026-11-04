@@ -10,7 +10,7 @@ public class RideTextureImporter : AssetPostprocessor
         ti.textureType = TextureImporterType.Default;
         ti.alphaIsTransparency = true;
         ti.isReadable = true;
-        ti.filterMode = UnityEngine.FilterMode.Bilinear;
+        ti.filterMode = UnityEngine.FilterMode.Point;
         ti.mipmapEnabled = false;
         ti.npotScale = TextureImporterNPOTScale.None;
         ti.textureCompression = TextureImporterCompression.Uncompressed;
