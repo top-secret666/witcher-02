@@ -50,11 +50,11 @@ public static class DarkFantasyPost
 
         var fg = Get<FilmGrain>(p);
         fg.type.Override(FilmGrainLookup.Medium3);
-        fg.intensity.Override(0.45f);
+        fg.intensity.Override(0.18f);
         fg.response.Override(0.75f);
 
         var chr = Get<ChromaticAberration>(p);
-        chr.intensity.Override(0.12f);
+        chr.intensity.Override(0f);              // no colour fringing: keep pixels crisp
 
         var mb = Get<MotionBlur>(p);
         mb.intensity.Override(0f);
