@@ -1,5 +1,8 @@
 // HorseRideRig - layered 2.5D parallax first-person horse ride, "dark fantasy nostalgia" (Witcher vibe).
-// Builds a Screen Space - Camera canvas at Play from textures in Resources/Ride/ so URP post-processing applies.
+// The scene objects (Sky, Background, Midground, Trees_Left, Road, Fog, Particles, Horse) are real GameObjects saved in
+// Assets/Scenes/HorseRide.unity by Tools > Build Dark Fantasy Ride; at Play this rig only drives them (serialized references).
+// If the scene has no baked objects (e.g. another scene) the rig builds the same hierarchy at runtime.
+// Screen Space - Camera canvas so URP post-processing applies; a low-res pixel RT is created at Play.
 // Layers back-to-front: Sky(+moon glow), Mountains, Castle, Valley, CliffsRight, Spires, CliffLeft, Path (CPU perspective road),
 // fog sheets between depths, moon rays, crows, fireflies, dust, Horse.
 // Controls: W / Up = ride forward, D / Right = steer right (A / Left = steer left), S / Down = back up.
@@ -16,14 +19,14 @@ using UnityEngine.InputSystem;
 [DisallowMultipleComponent]
 public class HorseRideRig : MonoBehaviour
 {
-    public enum Motion { Loop, Approach }
+    public enum Motion { Loop, Approach, Tunnel }
 
     [System.Serializable]
     public class ZoomLayer
     {
         public string textureName = "T_Ride_Castle";
         public bool enabled = true;
-        [Tooltip("Loop = endless zoom with two crossfading copies (near scenery). Approach = slowly grows with total distance ridden (far landmarks).")]
+        [Tooltip("Loop = endless zoom with two crossfading copies (near scenery). Approach = slowly grows with total distance ridden (far landmarks). Tunnel = 3 staggered copies that grow from the vanishing point and slide out past the screen edge (endless, gap-free).")]
         public Motion motion = Motion.Loop;
         [Tooltip("Scale at the start of a cycle")] public float startScale = 1f;
         [Tooltip("Scale at the end of a cycle / max scale for Approach")] public float endScale = 1.1f;
@@ -34,7 +37,9 @@ public class HorseRideRig : MonoBehaviour
         [Tooltip("How much of the camera bob this layer receives (0 far .. 1 near)")] public float bobAmount = 0.3f;
         [Tooltip("How much this layer pans when steering (0 far .. 1 near)")] public float steerParallax = 0.3f;
         [Tooltip("Colour multiplier (atmospheric perspective)")] public Color tint = Color.white;
-        [HideInInspector] public RawImage a, b;
+        [Tooltip("Hierarchy group: Background, Midground or Trees_Left")] public string hierarchyGroup = "Midground";
+        [Tooltip("Tunnel: number of staggered copies (2..3)")] [Range(2, 3)] public int tunnelCopies = 3;
+        [HideInInspector] public RawImage a, b, c;
         [HideInInspector] public RectTransform group;
     }
 
@@ -83,12 +88,12 @@ public class HorseRideRig : MonoBehaviour
     [Header("Layers (back to front, excluding sky/path/horse)")]
     public List<ZoomLayer> layers = new List<ZoomLayer>
     {
-        new ZoomLayer{ textureName="T_Ride_Mountains",   motion=Motion.Approach, startScale=1.00f, endScale=1.05f, crossfade=false, bobAmount=0.10f, steerParallax=0.06f, tint=new Color(0.95f,0.93f,1f) },
-        new ZoomLayer{ textureName="T_Ride_Castle",      motion=Motion.Approach, startScale=1.00f, endScale=1.22f, crossfade=false, bobAmount=0.15f, steerParallax=0.09f },
-        new ZoomLayer{ textureName="T_Ride_Valley",      startScale=1.00f, endScale=1.18f, drift=new Vector2(  0, -30), bobAmount=0.25f, steerParallax=0.16f },
-        new ZoomLayer{ textureName="T_Ride_CliffsRight", startScale=1.00f, endScale=1.30f, drift=new Vector2( 70, -40), bobAmount=0.35f, steerParallax=0.30f },
-        new ZoomLayer{ textureName="T_Ride_Spires",      startScale=1.00f, endScale=1.45f, drift=new Vector2(-70, -40), bobAmount=0.55f, steerParallax=0.40f },
-        new ZoomLayer{ textureName="T_Ride_CliffLeft",   startScale=1.00f, endScale=1.90f, drift=new Vector2(-200,-30), cyclesPerLoop=2, bobAmount=0.8f, steerParallax=0.65f, tint=new Color(0.92f,0.92f,0.98f) },
+        new ZoomLayer{ textureName="T_Ride_Mountains",   hierarchyGroup="Background", motion=Motion.Approach, startScale=1.00f, endScale=1.05f, crossfade=false, bobAmount=0.10f, steerParallax=0.06f, tint=new Color(0.95f,0.93f,1f) },
+        new ZoomLayer{ textureName="T_Ride_Castle",      hierarchyGroup="Background", motion=Motion.Approach, startScale=1.00f, endScale=1.22f, crossfade=false, bobAmount=0.15f, steerParallax=0.09f },
+        new ZoomLayer{ textureName="T_Ride_Valley",      hierarchyGroup="Midground", startScale=1.00f, endScale=1.18f, drift=new Vector2(  0, -30), bobAmount=0.25f, steerParallax=0.16f },
+        new ZoomLayer{ textureName="T_Ride_CliffsRight", hierarchyGroup="Midground", startScale=1.00f, endScale=1.30f, drift=new Vector2( 70, -40), bobAmount=0.35f, steerParallax=0.30f },
+        new ZoomLayer{ textureName="T_Ride_Spires",      hierarchyGroup="Midground", startScale=1.00f, endScale=1.45f, drift=new Vector2(-70, -40), bobAmount=0.55f, steerParallax=0.40f },
+        new ZoomLayer{ textureName="T_Ride_CliffLeft",   hierarchyGroup="Trees_Left", motion=Motion.Tunnel, tunnelCopies=3, startScale=0.80f, endScale=2.60f, drift=new Vector2(-90,-20), fadeFraction=0.22f, bobAmount=0.8f, steerParallax=0.65f, tint=new Color(0.92f,0.92f,0.98f) },
     };
 
     [Header("Fog (procedural dithered pixel fog)")]
@@ -96,11 +101,17 @@ public class HorseRideRig : MonoBehaviour
     public Color fogColor = new Color(0.55f, 0.47f, 0.74f, 1f);
     public Color groundMistColor = new Color(0.50f, 0.55f, 0.70f, 1f);
     [Tooltip("Fog pixel grid (texture width in pixels)")] public int fogTexWidth = 240;
-    [Tooltip("Haze sheet IN FRONT of each layer (same order as Layers)")] public float[] layerFogAlpha = { 0.20f, 0.22f, 0.20f, 0.12f, 0.08f, 0f };
+    [Tooltip("Haze sheet IN FRONT of each layer (same order as Layers)")] public float[] layerFogAlpha = { 0f, 0f, 0f, 0f, 0f, 0f };
     [Tooltip("Vertical centre of each haze band (0 bottom .. 1 top)")] public float[] layerFogCenter = { 0.47f, 0.385f, 0.31f, 0.26f, 0.22f, 0.2f };
     [Tooltip("Horizontal drift speed of the fog (uv per second)")] public float fogDrift = 0.008f;
-    [Range(0, 1)] public float groundMistAlpha = 0.22f;
-    [Range(0, 1)] public float foregroundWispAlpha = 0.10f;
+    [Range(0, 1)] public float groundMistAlpha = 0f;
+    [Range(0, 1)] public float foregroundWispAlpha = 0f;
+    [Tooltip("Fog bank on the right side only: fills the bottom-right and rolls up to the foot of the right mountain")] public bool buildRightFog = true;
+    [Range(0, 1)] public float rightFogAlpha = 0.85f;
+    [Range(0, 1)] public float rightFogBackAlpha = 0.45f;
+    [Tooltip("Top of the fog bank (screen fraction from bottom) = foot of the right mountain")] public float rightFogTop = 0.48f;
+    public Color rightFogColor = new Color(0.58f, 0.52f, 0.76f, 1f);
+    [Tooltip("Slow sideways breathing of the fog bank (ref px)")] public float rightFogSway = 22f;
 
     [Header("Path (CPU perspective road)")]
     public bool buildPath = true;
@@ -121,13 +132,15 @@ public class HorseRideRig : MonoBehaviour
 
     [Header("Pine rows along the road (perspective, endless)")]
     public bool buildPineRows = true;
-    [Tooltip("Trees per side")] public int pinesPerSide = 16;
-    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 2.6f;
-    [Tooltip("Distance of tree trunks from the road centre (world units)")] public Vector2 pineLateral = new Vector2(2.0f, 2.7f);
-    [Tooltip("Tree height in world units (camera height = cameraHeight)")] public Vector2 pineHeight = new Vector2(3.2f, 4.4f);
+    public bool pinesLeft = true, pinesRight = false;
+    [Tooltip("Sprites Resources/Ride/<prefix>0.._DF (falls back to T_Ride_Pine)")] public string pineTexturePrefix = "T_Ride_Tree";
+    [Tooltip("Trees per side")] public int pinesPerSide = 14;
+    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 2.4f;
+    [Tooltip("Distance of tree trunks from the road centre (world units)")] public Vector2 pineLateral = new Vector2(1.9f, 3.1f);
+    [Tooltip("Tree height in world units (camera/rider eye height = cameraHeight = 1)")] public Vector2 pineHeight = new Vector2(4.5f, 9.5f);
     public float pineNear = 0.9f;
     [Tooltip("Trees fade in from the fog beyond this distance")] public float pineFogStart = 6f, pineFogEnd = 34f;
-    public Color pineNearTint = new Color(0.78f, 0.80f, 0.86f, 1f);
+    public Color pineNearTint = new Color(0.86f, 0.86f, 0.94f, 1f);
     public Color pineFogTint = new Color(0.36f, 0.31f, 0.55f, 1f);
 
     [Header("Horse (foreground)")]
@@ -170,6 +183,9 @@ public class HorseRideRig : MonoBehaviour
     public Color smokeColor = new Color(0.56f, 0.50f, 0.66f, 0.6f);
 
     [Header("Particles")]
+    [Tooltip("Fireflies and ash/dust as ParticleSystem components (off = legacy UI sprites)")] public bool useParticleSystems = true;
+    [Tooltip("Particle material (the builder saves one to Assets/Ride/Generated)")] public Material particleMaterial;
+    [Range(0, 50)] public int particleSortingOrder = 20;
     public bool buildFireflies = true;
     public int fireflyCount = 46;
     public Color fireflyColor = new Color(1f, 0.86f, 0.45f, 1f);
@@ -184,64 +200,98 @@ public class HorseRideRig : MonoBehaviour
     public int crowCount = 4;
 
     // ------------------------------------------------------------------ state
-    RectTransform _root, _world, _skyGroup;
-    RawImage _sky, _path, _horse, _rays;
+    // Scene objects are serialized (baked by the editor builder); simulation state is runtime only.
+    [System.Serializable] public class Pine { public RawImage img; public int side, slot; }
+    [System.Serializable] public class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
+    [System.Serializable] public class Mote { public RawImage img; public Vector3 p; public float seed, size, speed; public bool firefly; }
+    [System.Serializable] public class Crow { public RawImage img; public float x, y, speed, phase, scale; }
+    [System.Serializable] public class Puff { public RawImage img; public float phase, seed, strength; public int layer, copy; public Vector2 uv; }
+    [System.Serializable] public class FogSheet { public RawImage img; public float speed, steer, sway, seed; public bool scroll; }
+
+    [SerializeField, HideInInspector] bool _built;
+    [SerializeField, HideInInspector] Canvas _canvas;
+    [SerializeField, HideInInspector] RectTransform _root, _world, _skyGroup, _pineGroup;
+    [SerializeField, HideInInspector] RawImage _sky, _path, _horse, _rays, _moonGlow;
+    [SerializeField, HideInInspector] List<Pine> _pines = new List<Pine>();
+    [SerializeField, HideInInspector] List<Texture2D> _pineTex = new List<Texture2D>();
+    [SerializeField, HideInInspector] List<Dust> _dust = new List<Dust>();
+    [SerializeField, HideInInspector] List<FogSheet> _fogSheets = new List<FogSheet>();
+    [SerializeField, HideInInspector] List<Mote> _motes = new List<Mote>();
+    [SerializeField, HideInInspector] List<Crow> _crows = new List<Crow>();
+    [SerializeField, HideInInspector] List<Puff> _puffs = new List<Puff>();
+    [SerializeField, HideInInspector] List<ParticleSystem> _particles = new List<ParticleSystem>();
+    [SerializeField, HideInInspector] Texture2D _crowUp, _crowDown;
+
     Texture2D _pathOut, _pathSrc;
     Color32[] _src, _dst;
     int _sw, _sh;
     float _t, _speed, _speedVel, _accel, _bobAmp, _gaitW, _gallopW, _stride, _prevPh, _earTimer = 2f, _earT = 1f, _steer, _distance;
     float _camY, _camV, _headY, _headV, _shake, _pathCurveNow;
-    class Pine { public RawImage img; public int side, slot; }
-    readonly List<Pine> _pines = new List<Pine>();
-    readonly List<Texture2D> _pineTex = new List<Texture2D>();
-    RectTransform _pineGroup;
-    class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
-    readonly List<Dust> _dust = new List<Dust>();
-    Texture2D _dustTex;
     Camera _cam, _displayCam;
+    GameObject _displayRoot;
     RenderTexture _rt;
-    readonly List<(RawImage img, float speed, float steer)> _fogSheets = new List<(RawImage, float, float)>();
-
-    class Mote { public RawImage img; public Vector3 p; public float seed, size, speed; public bool firefly; }
-    readonly List<Mote> _motes = new List<Mote>();
-    class Crow { public RawImage img; public float x, y, speed, phase, scale; }
-    readonly List<Crow> _crows = new List<Crow>();
-    Texture2D _crowUp, _crowDown;
 
     // aspect handling: the 9:16 design area (world) stays centred; everything that must reach the screen edges extends sideways
     float _aspect = 0.5625f, _extraPx;     // extra canvas px on each side beyond the 1080-wide design area
     const float WorldW = 1160f;            // design width + 2*40 bob margin
+    const float MaxAspect = 2.4f;          // fog / rays are generated wide enough for 21:9
     float LayerExt => (Mathf.Max(0f, overscan) * referenceResolution.x + _extraPx) / WorldW;   // layer rect extension per side, in world widths
-    float EdgeExt => (_extraPx + 60f) / WorldW;                                                 // fog / path / rays extension per side
+    float EdgeExt => (_extraPx + 60f) / WorldW;                                                 // path extension per side
+    float MaxExt => (Mathf.Max(0f, (referenceResolution.y * MaxAspect - referenceResolution.x) * 0.5f) + 60f) / WorldW;
     readonly Dictionary<Texture2D, bool> _edgeOpaque = new Dictionary<Texture2D, bool>();
 
-    /// <summary>Destroys everything Build() made and builds again (used when the screen aspect changes).</summary>
-    public void Rebuild()
+    public bool IsBuilt => _built && _canvas && _world && _sky;
+    public RenderTexture PixelTarget => _rt;
+    public Camera RenderCamera => _cam;
+    public RawImage PathImage => _path;
+    public IReadOnlyList<ParticleSystem> Particles => _particles;
+
+    void Start() { if (Application.isPlaying) BeginRuntime(); }
+
+    /// <summary>Takes over the baked scene objects (or builds them if missing), fits them to the screen aspect,
+    /// creates the pixel render target and starts driving everything. Also used by the editor preview renderer.</summary>
+    public void BeginRuntime()
+    {
+        if (!IsBuilt) { ClearHierarchy(); Build(); }
+        ConfigureCanvasCamera();
+        SetupVolume();
+        Relayout();
+        SetupPixelDisplay();
+        foreach (var ps in _particles) if (ps) { ps.Clear(true); ps.Play(true); }
+        Tick(0f);
+    }
+
+    /// <summary>Removes the runtime-only display (pixel RT, display camera); scene objects stay.</summary>
+    public void EndRuntime()
     {
         if (_cam && _cam.targetTexture == _rt) _cam.targetTexture = null;
-        if (_rt) { _rt.Release(); if (Application.isPlaying) Destroy(_rt); else DestroyImmediate(_rt); _rt = null; }
+        if (_rt) { _rt.Release(); DestroyObj(_rt); _rt = null; }
+        if (_displayRoot) DestroyObj(_displayRoot);
+        _displayRoot = null; _displayCam = null;
+    }
+
+    static void DestroyObj(Object o) { if (!o) return; if (Application.isPlaying) Destroy(o); else DestroyImmediate(o); }
+
+    /// <summary>Deletes every object the rig made (scene objects included) and clears the references.</summary>
+    public void ClearHierarchy()
+    {
+        EndRuntime();
         for (int i = transform.childCount - 1; i >= 0; i--)
         {
             var go = transform.GetChild(i).gameObject;
             go.SetActive(false);
-            if (Application.isPlaying) Destroy(go); else DestroyImmediate(go);
+            DestroyObj(go);
         }
-        _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _dust.Clear();
-        _sky = _path = _horse = _rays = null; _pineGroup = null; _displayCam = null;
-        foreach (var L in layers) { L.a = L.b = null; L.group = null; }
-        Build();
+        _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _dust.Clear(); _particles.Clear();
+        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _canvas = null; _root = _world = _skyGroup = null;
+        foreach (var L in layers) { L.a = L.b = L.c = null; L.group = null; }
+        _pathOut = null; _built = false;
     }
 
-    public RenderTexture PixelTarget => _rt;
-    public Camera RenderCamera => _cam;
+    /// <summary>Destroys everything and builds again.</summary>
+    public void Rebuild() { ClearHierarchy(); Build(); if (Application.isPlaying) BeginRuntime(); }
 
-    void Start() { Build(); }
-
-    void OnDestroy()
-    {
-        if (_cam && _cam.targetTexture == _rt) _cam.targetTexture = null;
-        if (_rt) { _rt.Release(); if (Application.isPlaying) Destroy(_rt); else DestroyImmediate(_rt); }
-    }
+    void OnDestroy() { EndRuntime(); }
 
     Texture2D Load(string n)
     {
@@ -307,7 +357,7 @@ public class HorseRideRig : MonoBehaviour
     }
 
     // ------------------------------------------------------------------ build
-    void SetupCamera(Canvas canvas)
+    void ConfigureCanvasCamera()
     {
         _cam = Camera.main;
         if (!_cam)
@@ -320,34 +370,60 @@ public class HorseRideRig : MonoBehaviour
         _cam.cullingMask |= 1 << 5;
         var data = _cam.GetUniversalAdditionalCameraData();
         if (data != null) { data.renderPostProcessing = setupPostFX; data.antialiasing = AntialiasingMode.None; }
-
-        if (pixelHeight > 0)
+        if (_canvas)
         {
-            int h = pixelHeight, w = Mathf.Max(16, Mathf.RoundToInt(h * _aspect));
-            _rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { name = "RidePixelRT", filterMode = FilterMode.Point, antiAliasing = 1 };
-            _rt.Create();
-            _cam.targetTexture = _rt;
-
-            // A display camera + overlay canvas shows the low-res frame, upscaled with hard pixels; RT aspect = screen aspect, so it fills the screen.
-            var dgo = new GameObject("RideDisplayCamera", typeof(Camera));
-            dgo.transform.SetParent(transform, false);
-            _displayCam = dgo.GetComponent<Camera>();
-            _displayCam.clearFlags = CameraClearFlags.SolidColor; _displayCam.backgroundColor = Color.black;
-            _displayCam.cullingMask = 0; _displayCam.depth = _cam.depth + 10;
-            var dd = _displayCam.GetUniversalAdditionalCameraData();
-            if (dd != null) dd.renderPostProcessing = false;
-
-            var ogo = new GameObject("RideDisplayUI", typeof(Canvas), typeof(CanvasScaler)); ogo.layer = 5;
-            ogo.transform.SetParent(transform, false);
-            var oc = ogo.GetComponent<Canvas>(); oc.renderMode = RenderMode.ScreenSpaceOverlay; oc.sortingOrder = 100;
-            var img = MakeImage("Frame", _rt, (RectTransform)ogo.transform); img.color = Color.white;
-            var fit = img.gameObject.AddComponent<AspectRatioFitter>();
-            fit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent; fit.aspectRatio = _aspect;
+            _canvas.renderMode = RenderMode.ScreenSpaceCamera;
+            _canvas.worldCamera = _cam;
+            _canvas.planeDistance = Mathf.Clamp(5f, _cam.nearClipPlane + 0.1f, _cam.farClipPlane - 0.1f);
         }
+    }
 
-        canvas.renderMode = RenderMode.ScreenSpaceCamera;
-        canvas.worldCamera = _cam;
-        canvas.planeDistance = Mathf.Clamp(5f, _cam.nearClipPlane + 0.1f, _cam.farClipPlane - 0.1f);
+    // Runtime only: the main camera renders into a low-res RT with the screen's aspect; a display camera + overlay canvas
+    // shows it upscaled with hard pixels, filling the whole screen.
+    void SetupPixelDisplay()
+    {
+        EndRuntime();
+        if (pixelHeight <= 0 || !_cam) return;
+        int h = pixelHeight, w = Mathf.Max(16, Mathf.RoundToInt(h * _aspect));
+        _rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32) { name = "RidePixelRT", filterMode = FilterMode.Point, antiAliasing = 1 };
+        _rt.Create();
+        _cam.targetTexture = _rt;
+
+        _displayRoot = new GameObject("RideDisplay (runtime)");
+        _displayRoot.hideFlags = HideFlags.DontSave;
+        _displayRoot.transform.SetParent(transform, false);
+        var dgo = new GameObject("RideDisplayCamera", typeof(Camera));
+        dgo.transform.SetParent(_displayRoot.transform, false);
+        _displayCam = dgo.GetComponent<Camera>();
+        _displayCam.clearFlags = CameraClearFlags.SolidColor; _displayCam.backgroundColor = Color.black;
+        _displayCam.cullingMask = 0; _displayCam.depth = _cam.depth + 10;
+        var dd = _displayCam.GetUniversalAdditionalCameraData();
+        if (dd != null) dd.renderPostProcessing = false;
+
+        var ogo = new GameObject("RideDisplayUI", typeof(Canvas), typeof(CanvasScaler)); ogo.layer = 5;
+        ogo.transform.SetParent(_displayRoot.transform, false);
+        var oc = ogo.GetComponent<Canvas>(); oc.renderMode = RenderMode.ScreenSpaceOverlay; oc.sortingOrder = 100;
+        var img = MakeImage("Frame", _rt, (RectTransform)ogo.transform); img.color = Color.white;
+        var fit = img.gameObject.AddComponent<AspectRatioFitter>();
+        fit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent; fit.aspectRatio = _aspect;
+    }
+
+    float ComputeAspect()
+    {
+        if (forceAspect > 0f) return forceAspect;
+        return Screen.height > 0 ? (float)Screen.width / Screen.height : 0.5625f;
+    }
+
+    /// <summary>Fits the (baked) objects to the current aspect: layer widths, anchors, road strip.</summary>
+    public void Relayout()
+    {
+        _aspect = ComputeAspect();
+        _extraPx = Mathf.Max(0f, (referenceResolution.y * _aspect - referenceResolution.x) * 0.5f);
+        if (_sky) SetupLayerRect(_sky);
+        foreach (var L in layers) { if (L.a) SetupLayerRect(L.a); if (L.b) SetupLayerRect(L.b); if (L.c) SetupLayerRect(L.c); }
+        if (_moonGlow) _moonGlow.rectTransform.anchorMin = _moonGlow.rectTransform.anchorMax = new Vector2(LayerAnchorX(moonPos.x), moonPos.y);
+        foreach (var p in _puffs) if (p.img) p.img.rectTransform.anchorMin = p.img.rectTransform.anchorMax = new Vector2(LayerAnchorX(p.uv.x), p.uv.y);
+        SetupPathStrip();
     }
 
     void SetupVolume()
@@ -361,20 +437,24 @@ public class HorseRideRig : MonoBehaviour
         var vol = go.GetComponent<Volume>(); vol.isGlobal = true; vol.priority = 50; vol.sharedProfile = postProfile;
     }
 
+    readonly Dictionary<string, RectTransform> _groups = new Dictionary<string, RectTransform>();
+    RectTransform Group(string key) { return _groups.TryGetValue(key, out var g) && g ? g : _world; }
+
+    /// <summary>Creates the whole scene hierarchy (works in Edit mode: the builder saves it into the scene).</summary>
     public void Build()
     {
-        var canvasGo = new GameObject("RideUI", typeof(Canvas), typeof(CanvasScaler));
+        if (IsBuilt) return;
+        _aspect = ComputeAspect();
+        _extraPx = Mathf.Max(0f, (referenceResolution.y * _aspect - referenceResolution.x) * 0.5f);
+        var canvasGo = new GameObject("RideCanvas", typeof(Canvas), typeof(CanvasScaler));
         canvasGo.layer = 5;
         canvasGo.transform.SetParent(transform, false);
-        var c = canvasGo.GetComponent<Canvas>();
-        _aspect = forceAspect > 0f ? forceAspect : (Screen.height > 0 ? (float)Screen.width / Screen.height : 0.5625f);
-        _extraPx = Mathf.Max(0f, (referenceResolution.y * _aspect - referenceResolution.x) * 0.5f);
-        SetupCamera(c);
-        SetupVolume();
+        _canvas = canvasGo.GetComponent<Canvas>();
+        ConfigureCanvasCamera();
         var cs = canvasGo.GetComponent<CanvasScaler>();
         cs.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; cs.referenceResolution = referenceResolution; cs.matchWidthOrHeight = 1f;
 
-        var bg = MakeImage("Bg", Texture2D.whiteTexture, (RectTransform)canvasGo.transform); bg.color = Color.black;
+        var bg = MakeImage("00_BlackBackdrop", null, (RectTransform)canvasGo.transform); bg.color = Color.black;
         var frame = new GameObject("Frame", typeof(RectTransform), typeof(RectMask2D)); frame.layer = 5;
         _root = (RectTransform)frame.transform; _root.SetParent(canvasGo.transform, false);
         _root.anchorMin = Vector2.zero; _root.anchorMax = Vector2.one; _root.offsetMin = _root.offsetMax = Vector2.zero;   // whole screen
@@ -382,52 +462,65 @@ public class HorseRideRig : MonoBehaviour
         _world = MakeGroup("World", _root);
         _world.anchorMin = _world.anchorMax = new Vector2(0.5f, 0.5f); _world.sizeDelta = referenceResolution + new Vector2(80f, 80f);
 
-        // Sky + moon glow
-        _skyGroup = MakeGroup("L1_SkyGroup", _world);
+        // draw order = sibling order (back to front)
+        _groups.Clear();
+        string[] order = { "Sky", "Background", "Midground", "Trees_Left", "Road", "Fog", "Particles" };
+        for (int i = 0; i < order.Length; i++) _groups[order[i]] = MakeGroup((i + 1).ToString("00") + "_" + order[i], _world);
+
+        // Sky + moon glow + crows
+        _skyGroup = Group("Sky");
         _sky = MakeImage("Sky", Load("T_Ride_Sky"), _skyGroup); SetupLayerRect(_sky); _sky.color = skyTint;
         if (buildMoonGlow) BuildMoonGlow();
         if (buildCrows) BuildCrows();
 
-        int li = 2;
         for (int i = 0; i < layers.Count; i++)
         {
             var L = layers[i];
-            L.a = L.b = null; L.group = null;
+            L.a = L.b = L.c = null; L.group = null;
             if (!L.enabled) continue;
             var tex = Load(L.textureName);
             if (!tex) { Debug.LogWarning("HorseRideRig: missing Resources/Ride/" + L.textureName); continue; }
-            L.group = MakeGroup("L" + li + "_" + L.textureName, _world);
-            L.a = MakeImage(L.textureName + "_A", tex, L.group); SetupLayerRect(L.a);
-            if (L.motion == Motion.Loop && L.crossfade) { L.b = MakeImage(L.textureName + "_B", tex, L.group); SetupLayerRect(L.b); }
-            if (buildMoonRays && L.textureName.Contains("Castle")) BuildMoonRays();
+            var parent = Group(string.IsNullOrEmpty(L.hierarchyGroup) ? "Midground" : L.hierarchyGroup);
+            string nice = L.textureName.Replace("T_Ride_", "");
+            if (nice == "CliffLeft") nice = "BrownTrees_Left";
+            L.group = MakeGroup(nice, parent);
+            L.a = MakeImage(nice + "_A", tex, L.group); SetupLayerRect(L.a);
+            bool second = (L.motion == Motion.Loop && L.crossfade) || L.motion == Motion.Tunnel;
+            if (second) { L.b = MakeImage(nice + "_B", tex, L.group); SetupLayerRect(L.b); }
+            if (L.motion == Motion.Tunnel && L.tunnelCopies >= 3) { L.c = MakeImage(nice + "_C", tex, L.group); SetupLayerRect(L.c); }
+            if (buildMoonRays && L.textureName.Contains("Castle")) BuildMoonRays(parent);
+            if (buildFog && buildRightFog && rightFogBackAlpha > 0f && L.textureName.Contains("Valley"))
+                AddRightFog("Fog_Right_Back", parent, rightFogTop, 0.10f, rightFogBackAlpha, 0.55f, 401, 0.10f);
             if (buildFog && i < layerFogAlpha.Length && layerFogAlpha[i] > 0f)
             {
                 float cy = i < layerFogCenter.Length ? layerFogCenter[i] : 0.3f;
-                AddFogSheet("Haze_" + L.textureName, cy, 0.055f + i * 0.012f, layerFogAlpha[i], fogDrift * (1f + i * 0.6f), i * 37 + 3, fogColor, 0.05f + L.steerParallax);
+                AddFogSheet("Haze_" + nice, parent, cy, 0.055f + i * 0.012f, layerFogAlpha[i], fogDrift * (1f + i * 0.6f), i * 37 + 3, fogColor, 0.05f + L.steerParallax);
             }
-            li++;
         }
 
         if (buildSmoke) BuildSmoke();
-        if (buildPath) BuildPath();
         if (buildPineRows) BuildPines();
+        if (buildPath) BuildPath();
+        if (buildFog && buildRightFog && rightFogAlpha > 0f) AddRightFog("Fog_Right_Front", Group("Fog"), rightFogTop - 0.07f, 0.0f, rightFogAlpha, 0.85f, 977, 0.12f);
+        if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", Group("Fog"), 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
         if (buildHoofDust) BuildHoofDust();
-        if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
-        BuildMotes();
-        if (buildFog && foregroundWispAlpha > 0f) AddFogSheet("ForegroundWisps", 0.03f, 0.06f, foregroundWispAlpha, fogDrift * 5f, 517, groundMistColor, 1f);
+        if (useParticleSystems) BuildParticleSystems(); else BuildMotes();
+        if (buildFog && foregroundWispAlpha > 0f) AddFogSheet("ForegroundWisps", Group("Fog"), 0.03f, 0.06f, foregroundWispAlpha, fogDrift * 5f, 517, groundMistColor, 1f);
 
         if (buildHorse)
         {
             var htex = Load("T_Ride_Horse");
             if (htex)
             {
-                _horse = MakeImage("L9_Horse", htex, _root); _horse.color = horseTint;
+                _horse = MakeImage("08_Horse", htex, _root); _horse.color = horseTint;
                 var rt = _horse.rectTransform;
                 rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f); rt.pivot = new Vector2(0.5f, horsePivotY);
                 float h = referenceResolution.y * horseHeight;
                 rt.sizeDelta = new Vector2(h * htex.width / (float)htex.height, h);
             }
         }
+        _built = true;
+        Relayout();
         Tick(0f);
     }
 
@@ -445,17 +538,17 @@ public class HorseRideRig : MonoBehaviour
             float q = d * 6f + Bayer(x, y) - 0.5f; int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 6);
             px[y * n + x] = new Color32(255, 255, 255, (byte)(lvl * 255 / 6));
         }
-        t.SetPixels32(px); t.Apply(false);
-        var img = MakeImage("MoonGlow", t, _sky.rectTransform); img.color = moonGlowColor;
+        t.SetPixels32(px); t.Apply(false); t.name = "Gen_MoonGlow";
+        var img = MakeImage("MoonGlow", t, _sky.rectTransform); img.color = moonGlowColor; _moonGlow = img;
         var rt = img.rectTransform;
         // moonPos is in texture space; the sky rect has mirrored overscan, convert to rect space
         var p = new Vector2(LayerAnchorX(moonPos.x), moonPos.y);
         rt.anchorMin = rt.anchorMax = p; rt.sizeDelta = Vector2.one * moonGlowSize; rt.pivot = new Vector2(0.5f, 0.5f);
     }
 
-    void BuildMoonRays()
+    void BuildMoonRays(RectTransform parent)
     {
-        float ex = EdgeExt;
+        float ex = MaxExt;
         int H = 240, W = Mathf.RoundToInt(135 * (1f + 2f * ex));
         var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp };
         var px = new Color32[W * H];
@@ -472,14 +565,14 @@ public class HorseRideRig : MonoBehaviour
             float q = Mathf.Clamp01(v) * 3f + Bayer(x, y) - 0.5f; int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 3);
             px[y * W + x] = new Color32(235, 220, 255, (byte)(lvl * 255 / 3));
         }
-        t.SetPixels32(px); t.Apply(false);
-        _rays = MakeImage("MoonRays", t, _world); _rays.color = new Color(1, 1, 1, moonRayAlpha);
+        t.SetPixels32(px); t.Apply(false); t.name = "Gen_MoonRays";
+        _rays = MakeImage("MoonRays", t, parent); _rays.color = new Color(1, 1, 1, moonRayAlpha);
         _rays.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); _rays.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
     }
 
     void BuildCrows()
     {
-        _crowUp = CrowTex(true); _crowDown = CrowTex(false);
+        _crowUp = CrowTex(true); _crowDown = CrowTex(false); _crowUp.name = "Gen_CrowUp"; _crowDown.name = "Gen_CrowDown";
         for (int i = 0; i < crowCount; i++)
         {
             var img = MakeImage("Crow" + i, _crowUp, _skyGroup); img.color = new Color(0.05f, 0.03f, 0.09f, 1f);
@@ -506,7 +599,7 @@ public class HorseRideRig : MonoBehaviour
     }
 
     // Full-screen dithered pixel fog band: vertical centre/height in screen fractions (from bottom).
-    void AddFogSheet(string name, float centerY, float height, float alpha, float speed, int seed, Color col, float steer)
+    void AddFogSheet(string name, RectTransform parent, float centerY, float height, float alpha, float speed, int seed, Color col, float steer)
     {
         int W = Mathf.Max(32, fogTexWidth), H = Mathf.RoundToInt(W * referenceResolution.y / referenceResolution.x);
         var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat, filterMode = filter };
@@ -531,16 +624,55 @@ public class HorseRideRig : MonoBehaviour
                 px[y * W + x] = new Color32(fc.r, fc.g, fc.b, (byte)(lvl * 255 / 4));
             }
         }
-        t.SetPixels32(px); t.Apply(false);
-        var img = MakeImage(name, t, _world); img.color = new Color(1, 1, 1, alpha);
-        float ex = EdgeExt;
+        t.SetPixels32(px); t.Apply(false); t.name = "Gen_Fog_" + name;
+        var img = MakeImage(name, t, parent); img.color = new Color(1, 1, 1, alpha);
+        float ex = MaxExt;
         img.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); img.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
         img.uvRect = new Rect(0f, 0f, 1f + 2f * ex, 1f);
-        _fogSheets.Add((img, speed, steer));
+        _fogSheets.Add(new FogSheet { img = img, speed = speed, steer = steer, scroll = true });
     }
 
-    class Puff { public RawImage img; public float phase, seed, strength; public ZoomLayer owner; public bool isB; }
-    readonly List<Puff> _puffs = new List<Puff>();
+    // Fog bank on the right: dense in the bottom-right, thinning toward the road and rolling up to the foot of the right mountain.
+    // top = upper edge (screen fraction), bottomFade = fraction at the bottom that is left clear (back sheet), density 0..1.
+    void AddRightFog(string name, RectTransform parent, float top, float bottomFade, float alpha, float density, int seed, float steer)
+    {
+        float ex = MaxExt, span = 1f + 2f * ex;
+        int H = Mathf.Max(32, fogTexWidth) * 16 / 9 / 2, W = Mathf.RoundToInt(H * 9f / 16f * 2f * span);   // ~4 ref px per fog pixel
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter };
+        var px = new Color32[W * H];
+        Color32 fc = rightFogColor;
+        float aspect = (float)pathTexWidth / pathTexHeight;
+        for (int y = 0; y < H; y++)
+        {
+            float fy = (y + 0.5f) / H;                                   // 0 bottom .. 1 top of the world rect
+            // road right edge at this height (same perspective as the road strip), fog stays off the road
+            float ys = fy / Mathf.Max(0.05f, pathScreenFraction);
+            float dy = Mathf.Clamp(pathHorizon - ys, 0.02f, 1.5f);
+            float roadEdge = vanishingPoint.x + (pathWorldWidth * 0.5f * dy) / aspect + pathCurve * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
+            float left = Mathf.Max(roadEdge + 0.03f, vanishingPoint.x + 0.10f);
+            float bottomBoost = Mathf.Lerp(1.15f, 0.75f, Mathf.Clamp01(fy / Mathf.Max(0.05f, top)));
+            for (int x = 0; x < W; x++)
+            {
+                float xd = (x + 0.5f) / W * span - ex;                       // design-space x
+                // billowy, uneven top and left edges (no straight lines)
+                float topN = top + (Mathf.PerlinNoise(seed * 0.13f + xd * 3.1f, 7.7f) - 0.5f) * 0.12f + (Mathf.PerlinNoise(seed * 0.29f + xd * 9f, 3.3f) - 0.5f) * 0.04f;
+                float vert = (1f - Smooth(topN - 0.16f, topN, fy)) * Smooth(bottomFade * 0.5f, bottomFade + 0.001f, fy);
+                float leftN = left + (Mathf.PerlinNoise(seed * 0.17f + fy * 5f, 1.9f) - 0.5f) * 0.08f;
+                float horiz = Smooth(leftN, leftN + 0.26f, xd);
+                float n = 0f, amp = 0.55f, f = 1f;
+                for (int o = 0; o < 4; o++) { n += amp * Mathf.PerlinNoise(seed + xd * 6f * f, seed * 0.41f + fy * 9f * f); amp *= 0.5f; f *= 2f; }
+                float d = Mathf.Clamp01(horiz * vert * bottomBoost * density * (0.45f + n * 1.0f));
+                float q = d * 4f + Bayer(x, y) - 0.5f;
+                int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 4);
+                px[y * W + x] = new Color32(fc.r, fc.g, fc.b, (byte)(lvl * 255 / 4));
+            }
+        }
+        t.SetPixels32(px); t.Apply(false); t.name = "Gen_Fog_" + name;
+        var img = MakeImage(name, t, parent); img.color = new Color(1, 1, 1, alpha);
+        img.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); img.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
+        _fogSheets.Add(new FogSheet { img = img, speed = 0f, steer = steer, sway = rightFogSway, seed = seed, scroll = false });
+    }
+
 
     Texture2D MakePuffTex()
     {
@@ -558,20 +690,22 @@ public class HorseRideRig : MonoBehaviour
 
     void BuildSmoke()
     {
-        var tex = MakePuffTex();
+        var tex = MakePuffTex(); tex.name = "Gen_SmokePuff";
         foreach (var e in smokeEmitters)
         {
             int li = (int)e.z; if (li < 0 || li >= layers.Count) continue;
             var L = layers[li]; if (!L.enabled || !L.a) continue;
             var anchor = new Vector2(LayerAnchorX(e.x), e.y);
-            foreach (var host in new[] { L.a, L.b })
+            var hosts = new[] { L.a, L.b, L.c };
+            for (int hi = 0; hi < hosts.Length; hi++)
             {
+                var host = hosts[hi];
                 if (!host) continue;
                 for (int i = 0; i < puffsPerEmitter; i++)
                 {
                     var img = MakeImage("Smoke", tex, host.rectTransform);
                     var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = anchor; rt.pivot = new Vector2(0.5f, 0.5f);
-                    _puffs.Add(new Puff { img = img, phase = (float)i / puffsPerEmitter, seed = Random.value * 100f, strength = e.w, owner = L, isB = host == L.b });
+                    _puffs.Add(new Puff { img = img, phase = (float)i / puffsPerEmitter, seed = Random.value * 100f, strength = e.w, layer = li, copy = hi, uv = new Vector2(e.x, e.y) });
                 }
             }
         }
@@ -580,16 +714,20 @@ public class HorseRideRig : MonoBehaviour
     void UpdateSmoke()
     {
         float life = Mathf.Max(0.5f, smokeLife);
+        float tNow = Application.isPlaying ? Time.time : _t;
         foreach (var p in _puffs)
         {
-            float a = Mathf.Repeat(Time.time / life + p.phase, 1f);
-            float wob = Mathf.Sin((Time.time + p.seed) * 1.3f) * 4f * a;
+            if (!p.img) continue;
+            float a = Mathf.Repeat(tNow / life + p.phase, 1f);
+            float wob = Mathf.Sin((tNow + p.seed) * 1.3f) * 4f * a;
             var rt = p.img.rectTransform;
             rt.anchoredPosition = new Vector2((wind.x * smokeRise * a * a * 1.6f + wob), (wind.y * smokeRise * a)) * p.strength;
             float sz = smokeSize * p.strength * (0.6f + a * 2.4f);
             sz = Mathf.Round(sz / 4f) * 4f;
             rt.sizeDelta = new Vector2(sz, sz);
-            var host = p.isB ? p.owner.b : p.owner.a;
+            if (!p.img || p.layer < 0 || p.layer >= layers.Count) continue;
+            var owner = layers[p.layer];
+            var host = p.copy == 2 ? owner.c : p.copy == 1 ? owner.b : owner.a;
             float hostA = host ? host.color.a : 1f;
             var c = smokeColor; c.a *= Smooth(0f, 0.12f, a) * (1f - Smooth(0.45f, 1f, a)) * hostA;
             p.img.color = c;
@@ -611,14 +749,14 @@ public class HorseRideRig : MonoBehaviour
 
     void BuildMotes()
     {
-        var ff = MakeGlowDot(7, 0.3f);
-        var dust = MakeGlowDot(2, 1f);
+        var ff = MakeGlowDot(7, 0.3f); ff.name = "Gen_FireflyDot";
+        var dust = MakeGlowDot(2, 1f); dust.name = "Gen_DustDot";
         int total = (buildFireflies ? fireflyCount : 0) + (buildDust ? dustCount : 0) + (buildSnow ? snowCount : 0);
         for (int i = 0; i < total; i++)
         {
             bool isFF = buildFireflies && i < fireflyCount;
             bool isSnow = !isFF && buildSnow && i >= total - snowCount;
-            var img = MakeImage(isFF ? "Firefly" : isSnow ? "Snow" : "Dust", isFF ? ff : dust, _world);
+            var img = MakeImage(isFF ? "Firefly" : isSnow ? "Snow" : "Dust", isFF ? ff : dust, Group("Particles"));
             var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = vanishingPoint; rt.pivot = new Vector2(0.5f, 0.5f);
             var m = new Mote { img = img, firefly = isFF, seed = Random.value * 100f };
             m.size = isFF ? fireflySize * Random.Range(0.7f, 1.3f) : (isSnow ? 7f : dustSize) * Random.Range(0.6f, 1.4f);
@@ -643,6 +781,7 @@ public class HorseRideRig : MonoBehaviour
         float widen = (referenceResolution.x + 2f * _extraPx) / referenceResolution.x;
         foreach (var m in _motes)
         {
+            if (!m.img) continue;
             m.p.z -= travel * 0.22f * m.speed;
             if (m.firefly)
             {
@@ -672,6 +811,7 @@ public class HorseRideRig : MonoBehaviour
     {
         foreach (var c in _crows)
         {
+            if (!c.img) continue;
             c.x += c.speed * dt; c.phase += dt * 2.2f;
             if (c.x > 1.2f) RespawnCrow(c, false);
             var rt = c.img.rectTransform;
@@ -684,19 +824,23 @@ public class HorseRideRig : MonoBehaviour
     // ---------------------------------------------------------------- pine rows
     void BuildPines()
     {
-        for (int v = 0; v < 8; v++) { var t = Load("T_Ride_Pine" + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
-        if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/T_Ride_Pine*_DF textures"); return; }
+        for (int v = 0; v < 8; v++) { var t = Load(pineTexturePrefix + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
+        if (_pineTex.Count == 0) for (int v = 0; v < 8; v++) { var t = Load("T_Ride_Pine" + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
+        if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/" + pineTexturePrefix + "*_DF textures"); return; }
         // same rect as the road strip so trees share the road's perspective mapping
-        _pineGroup = MakeGroup("L8b_PineRows", _world);
+        _pineGroup = MakeGroup("Pines_Left", Group("Trees_Left"));
         _pineGroup.anchorMin = Vector2.zero; _pineGroup.anchorMax = new Vector2(1f, pathScreenFraction);
         _pineGroup.offsetMin = _pineGroup.offsetMax = Vector2.zero; _pineGroup.pivot = new Vector2(vanishingPoint.x, 0f);
         for (int side = -1; side <= 1; side += 2)
+        {
+            if (side < 0 && !pinesLeft || side > 0 && !pinesRight) continue;
             for (int i = 0; i < pinesPerSide; i++)
             {
-                var img = MakeImage("Pine", _pineTex[0], _pineGroup);
+                var img = MakeImage((side < 0 ? "Pine_L" : "Pine_R") + i.ToString("00"), _pineTex[i % _pineTex.Count], _pineGroup);
                 var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0.02f);
                 _pines.Add(new Pine { img = img, side = side, slot = i });
             }
+        }
     }
 
     static float Hash(int n, int side) { uint h = (uint)(n * 374761393 + side * 668265263); h = (h ^ (h >> 13)) * 1274126177u; return ((h ^ (h >> 16)) & 0xFFFF) / 65535f; }
@@ -712,6 +856,7 @@ public class HorseRideRig : MonoBehaviour
         float frac = travel / pineSpacing - baseIdx;
         foreach (var p in _pines)
         {
+            if (!p.img) continue;
             int worldIdx = (int)baseIdx + p.slot;                          // identity of the tree along the endless road
             float stagger = p.side > 0 ? 0.5f : 0f;
             float z = pineNear + (p.slot + stagger - frac) * pineSpacing;
@@ -739,17 +884,86 @@ public class HorseRideRig : MonoBehaviour
             p.img.color = c;
         }
         // far trees first, near trees on top
+        _pines.RemoveAll(q => q == null || !q.img);
         _pines.Sort((a, b) => (b.slot + (b.side > 0 ? 0.5f : 0f)).CompareTo(a.slot + (a.side > 0 ? 0.5f : 0f)));
         for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetSiblingIndex(i);
+    }
+
+    // ---------------------------------------------------------------- particle systems (fireflies, ash)
+    Material MakeParticleMaterial()
+    {
+        if (particleMaterial) return particleMaterial;
+        var sh = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (!sh) sh = Shader.Find("Sprites/Default");
+        var dot = MakeGlowDot(8, 0.35f); dot.name = "Gen_ParticleDot";
+        var m = new Material(sh) { name = "M_RideParticles" };
+        if (m.HasProperty("_BaseMap")) m.SetTexture("_BaseMap", dot);
+        if (m.HasProperty("_MainTex")) m.SetTexture("_MainTex", dot);
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", Color.white);
+        if (m.HasProperty("_Surface"))
+        {
+            m.SetFloat("_Surface", 1f); m.SetFloat("_Blend", 0f);
+            m.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha); m.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+            m.SetFloat("_ZWrite", 0f); m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        }
+        m.renderQueue = 3000;
+        particleMaterial = m;
+        return m;
+    }
+
+    ParticleSystem MakeParticles(string name, Color col, Vector2 size, Vector2 life, float rate, int max, float radial, float down, float noise, Vector3 box, Vector3 boxOffset, float grow)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(ParticleSystem)); go.layer = 5;
+        var rt = (RectTransform)go.transform; rt.SetParent(Group("Particles"), false);
+        rt.anchorMin = rt.anchorMax = vanishingPoint; rt.sizeDelta = Vector2.zero; rt.anchoredPosition = Vector2.zero;
+        var ps = go.GetComponent<ParticleSystem>();
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        var main = ps.main;
+        main.loop = true; main.prewarm = true; main.playOnAwake = true;
+        main.duration = 5f;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(life.x, life.y);
+        main.startSpeed = 0f;
+        main.startSize = new ParticleSystem.MinMaxCurve(size.x, size.y);
+        main.startColor = col;
+        main.maxParticles = max;
+        main.simulationSpace = ParticleSystemSimulationSpace.Local;
+        main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+        var em = ps.emission; em.rateOverTime = rate;
+        var sh = ps.shape; sh.enabled = true; sh.shapeType = ParticleSystemShapeType.Box; sh.scale = box; sh.position = boxOffset;
+        var vel = ps.velocityOverLifetime; vel.enabled = true; vel.space = ParticleSystemSimulationSpace.Local;
+        vel.x = new ParticleSystem.MinMaxCurve(0f); vel.y = new ParticleSystem.MinMaxCurve(-down); vel.z = new ParticleSystem.MinMaxCurve(0f);
+        vel.radial = new ParticleSystem.MinMaxCurve(radial);
+        if (noise > 0f) { var nz = ps.noise; nz.enabled = true; nz.strength = noise; nz.frequency = 0.35f; nz.scrollSpeed = 0.15f; nz.quality = ParticleSystemNoiseQuality.Medium; }
+        var sol = ps.sizeOverLifetime; sol.enabled = true; sol.size = new ParticleSystem.MinMaxCurve(1f, new AnimationCurve(new Keyframe(0f, 0.5f), new Keyframe(1f, grow)));
+        var col2 = ps.colorOverLifetime; col2.enabled = true;
+        var g = new Gradient();
+        g.SetKeys(new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                  new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.15f), new GradientAlphaKey(1f, 0.75f), new GradientAlphaKey(0f, 1f) });
+        col2.color = g;
+        var r = go.GetComponent<ParticleSystemRenderer>();
+        r.renderMode = ParticleSystemRenderMode.Billboard; r.sharedMaterial = MakeParticleMaterial(); r.sortingOrder = particleSortingOrder;
+        r.minParticleSize = 0f; r.maxParticleSize = 1f;
+        _particles.Add(ps);
+        ps.Play(true);
+        return ps;
+    }
+
+    void BuildParticleSystems()
+    {
+        float w = WorldW * 1.6f;
+        if (buildFireflies) MakeParticles("Fireflies", fireflyColor, new Vector2(fireflySize * 0.7f, fireflySize * 1.3f), new Vector2(5f, 8f), fireflyCount / 6f, fireflyCount + 20, 28f, 0f, 30f, new Vector3(w, 900f, 1f), new Vector3(0f, -350f, 0f), 1.6f);
+        if (buildDust) MakeParticles("Ash_Dust", dustColor, new Vector2(dustSize * 0.6f, dustSize * 1.4f), new Vector2(3f, 4.5f), dustCount / 3.5f, dustCount + 30, 150f, 18f, 8f, new Vector3(w, 1900f, 1f), Vector3.zero, 1.8f);
+        if (buildSnow) MakeParticles("Snow", new Color(0.92f, 0.92f, 1f, 0.8f), new Vector2(5f, 9f), new Vector2(4f, 6f), snowCount / 4f, snowCount + 30, 90f, 80f, 10f, new Vector3(w, 1900f, 1f), Vector3.zero, 1.5f);
     }
 
     // ---------------------------------------------------------------- hoof dust
     void BuildHoofDust()
     {
-        _dustTex = MakePuffTex();
+        var dustTex = MakePuffTex(); dustTex.name = "Gen_HoofDust";
+        var parent = MakeGroup("HoofDust", Group("Particles"));
         for (int i = 0; i < 28; i++)
         {
-            var img = MakeImage("HoofDust", _dustTex, _world);
+            var img = MakeImage("HoofDust" + i.ToString("00"), dustTex, parent);
             var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f); rt.pivot = new Vector2(0.5f, 0.5f);
             img.color = Color.clear; _dust.Add(new Dust { img = img });
         }
@@ -761,7 +975,7 @@ public class HorseRideRig : MonoBehaviour
         for (int k = 0; k < 2; k++)
         {
             Dust d = null; float oldest = -1f;
-            foreach (var q in _dust) if (q.age > oldest) { oldest = q.age; d = q; }
+            foreach (var q in _dust) if (q.img && q.age > oldest) { oldest = q.age; d = q; }
             if (d == null) return;
             d.side = Random.value < 0.5f ? -1f : 1f;
             d.age = 0f; d.life = Random.Range(0.7f, 1.2f);
@@ -774,6 +988,7 @@ public class HorseRideRig : MonoBehaviour
     {
         foreach (var d in _dust)
         {
+            if (!d.img) continue;
             if (d.age > d.life) { if (d.img.color.a > 0f) d.img.color = Color.clear; continue; }
             d.age += dt;
             float a = d.age / d.life;
@@ -788,21 +1003,36 @@ public class HorseRideRig : MonoBehaviour
 
     void BuildPath()
     {
-        _pathSrc = Load("T_Ride_Path");
-        if (!_pathSrc) { Debug.LogWarning("HorseRideRig: missing T_Ride_Path"); return; }
-        try { _src = _pathSrc.GetPixels32(); }
-        catch { Debug.LogError("HorseRideRig: T_Ride_Path must be Read/Write enabled (RideTextureImporter does this automatically)"); return; }
-        _sw = _pathSrc.width; _sh = _pathSrc.height;
-        // the strip is widened sideways for wide screens; pathTexWidth stays the design-area resolution
+        _path = MakeImage("Road_Path", null, Group("Road"));
+        _path.color = Color.white;
+        SetupPathStrip();
+    }
+
+    // (Re)creates the CPU road texture for the current aspect; the strip is widened sideways for wide screens.
+    void SetupPathStrip()
+    {
+        if (!_path) return;
+        if (_src == null)
+        {
+            _pathSrc = Load("T_Ride_Path");
+            if (!_pathSrc) { Debug.LogWarning("HorseRideRig: missing T_Ride_Path"); return; }
+            try { _src = _pathSrc.GetPixels32(); }
+            catch { Debug.LogError("HorseRideRig: T_Ride_Path must be Read/Write enabled (RideTextureImporter does this automatically)"); return; }
+            _sw = _pathSrc.width; _sh = _pathSrc.height;
+        }
         _pathExt = EdgeExt;
-        _pathW = Mathf.RoundToInt(pathTexWidth * (1f + 2f * _pathExt));
-        _pathOut = new Texture2D(_pathW, pathTexHeight, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter };
-        _dst = new Color32[_pathW * pathTexHeight];
-        _path = MakeImage("L8_Path", _pathOut, _world);
+        int W = Mathf.RoundToInt(pathTexWidth * (1f + 2f * _pathExt));
+        if (!_pathOut || _pathW != W || _pathOut.height != pathTexHeight)
+        {
+            if (_pathOut) DestroyObj(_pathOut);
+            _pathW = W;
+            _pathOut = new Texture2D(_pathW, pathTexHeight, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter, name = "Gen_RoadSnapshot" };
+            _dst = new Color32[_pathW * pathTexHeight];
+        }
+        _path.texture = _pathOut;
         var rt = _path.rectTransform; rt.anchorMin = Vector2.zero; rt.anchorMax = new Vector2(1f, pathScreenFraction);
         rt.offsetMin = new Vector2(-_pathExt * WorldW, 0); rt.offsetMax = new Vector2(_pathExt * WorldW, 0);
         rt.pivot = new Vector2((vanishingPoint.x + _pathExt) / (1f + 2f * _pathExt), 0f);
-        _path.color = Color.white;
     }
 
     float _pathExt; int _pathW;
@@ -819,6 +1049,7 @@ public class HorseRideRig : MonoBehaviour
 
     void DrawPath(float travel, float curve)
     {
+        if (_src == null || !_pathOut || _dst == null) return;
         int W = _pathW, H = pathTexHeight;
         float hz = pathHorizon * H;
         float span = 1f + 2f * _pathExt;
@@ -866,15 +1097,42 @@ public class HorseRideRig : MonoBehaviour
         img.color = c;
     }
 
+    // Tunnel: copies staggered evenly in phase; each grows exponentially from the vanishing point (pivot) and slides out
+    // past the screen edge, fading in while small (behind the others) and out at the very end. Nearest copy draws on top.
+    readonly List<(RawImage img, float p)> _tun = new List<(RawImage, float)>();
+    void ApplyTunnel(ZoomLayer L, float p, Vector2 bob, float steerPx)
+    {
+        _tun.Clear();
+        var imgs = new[] { L.a, L.b, L.c };
+        int n = 0; foreach (var im in imgs) if (im) n++;
+        int k = 0;
+        foreach (var im in imgs)
+        {
+            if (!im) continue;
+            float pk = Mathf.Repeat(p + (float)k / n, 1f); k++;
+            float s0 = Mathf.Max(0.05f, L.startScale), s = s0 * Mathf.Pow(Mathf.Max(s0, L.endScale) / s0, pk);
+            var rt = im.rectTransform; rt.localScale = new Vector3(s, s, 1);
+            float near = Mathf.Clamp01((s - s0) / Mathf.Max(0.01f, L.endScale - s0));
+            rt.anchoredPosition = L.drift * pk + bob * L.bobAmount * Mathf.Lerp(0.5f, 1.2f, near) - new Vector2(steerPx * L.steerParallax * Mathf.Lerp(0.5f, 1.3f, near), 0);
+            var c = Color.Lerp(grade * pineFogTint, grade * L.tint, Smooth(0f, 0.45f, pk));
+            c.a = Smooth(0f, L.fadeFraction, pk) * (1f - Smooth(0.82f, 1f, pk));
+            im.color = c;
+            _tun.Add((im, pk));
+        }
+        _tun.Sort((x, y) => x.p.CompareTo(y.p));
+        for (int i = 0; i < _tun.Count; i++) _tun[i].img.transform.SetSiblingIndex(i);
+    }
+
     float _aspectCheck;
     void Update()
     {
+        if (!IsBuilt) return;
         _aspectCheck -= Time.unscaledDeltaTime;
         if (_aspectCheck <= 0f)
         {
             _aspectCheck = 0.25f;
             float a = forceAspect > 0f ? forceAspect : (Screen.height > 0 ? (float)Screen.width / Screen.height : _aspect);
-            if (Mathf.Abs(a - _aspect) > 0.01f) Rebuild();   // Game view / window resized -> refit to the new aspect
+            if (Mathf.Abs(a - _aspect) > 0.01f) { Relayout(); SetupPixelDisplay(); }   // Game view / window resized -> refit to the new aspect
         }
         Tick(Time.deltaTime);
     }
@@ -936,11 +1194,8 @@ public class HorseRideRig : MonoBehaviour
         }
 
         if (_skyGroup) _skyGroup.anchoredPosition = bob * skyBobAmount - new Vector2(steerPx * skySteer, 0);
-        if (_sky && buildMoonGlow && _sky.transform.childCount > 0)
-        {
-            var g = _sky.transform.GetChild(0).GetComponent<RawImage>();
-            if (g) { var c = moonGlowColor; c.a *= 0.85f + 0.15f * Mathf.Sin(Time.time * 0.8f); g.color = c; }
-        }
+        float tNow = Application.isPlaying ? Time.time : _t;
+        if (_moonGlow) { var c = moonGlowColor; c.a *= 0.85f + 0.15f * Mathf.Sin(tNow * 0.8f); _moonGlow.color = c; }
 
         float approach = 1f - Mathf.Exp(-_distance / Mathf.Max(1f, approachSeconds));
         foreach (var L in layers)
@@ -955,6 +1210,11 @@ public class HorseRideRig : MonoBehaviour
                 continue;
             }
             float p = Mathf.Repeat(loopT * Mathf.Max(1, L.cyclesPerLoop), 1f);
+            if (L.motion == Motion.Tunnel)
+            {
+                ApplyTunnel(L, p, bob, steerPx);
+                continue;
+            }
             if (L.crossfade && L.b)
             {
                 float pb = (p + 0.5f) % 1f;
@@ -968,21 +1228,37 @@ public class HorseRideRig : MonoBehaviour
         if (_rays)
         {
             _rays.rectTransform.anchoredPosition = bob * 0.12f - new Vector2(steerPx * 0.08f, 0);
-            _rays.color = new Color(1, 1, 1, moonRayAlpha * (0.8f + 0.2f * Mathf.Sin(Time.time * 0.5f)));
+            _rays.color = new Color(1, 1, 1, moonRayAlpha * (0.8f + 0.2f * Mathf.Sin(tNow * 0.5f)));
         }
 
-        float tNow = Application.isPlaying ? Time.time : _t;
         for (int i = 0; i < _fogSheets.Count; i++)
         {
             var f = _fogSheets[i];
-            var r = f.img.uvRect;
-            r.x = Mathf.Repeat(tNow * f.speed + _t * 0.01f * (i + 1) + steerPx * f.steer / referenceResolution.x, 1f);
-            f.img.uvRect = r;
-            f.img.rectTransform.anchoredPosition = bob * (0.15f + 0.2f * f.steer);
+            if (f == null || !f.img) continue;
+            if (f.scroll)
+            {
+                var r = f.img.uvRect;
+                r.x = Mathf.Repeat(tNow * f.speed + _t * 0.01f * (i + 1) + steerPx * f.steer / referenceResolution.x, 1f);
+                f.img.uvRect = r;
+                f.img.rectTransform.anchoredPosition = bob * (0.15f + 0.2f * f.steer);
+            }
+            else
+            {
+                // fog bank: slow breathing sway, pans with steering like the scenery at its depth
+                float fsw = Mathf.Sin(tNow * 0.21f + f.seed) * f.sway + Mathf.Sin(tNow * 0.53f + f.seed * 1.7f) * f.sway * 0.35f;
+                f.img.rectTransform.anchoredPosition = new Vector2(fsw - steerPx * f.steer, Mathf.Sin(tNow * 0.17f + f.seed) * f.sway * 0.25f) + bob * (0.2f + 0.5f * f.steer);
+            }
         }
 
         UpdateSmoke(); UpdateCrows(dt);
         UpdateMotes(dt * _speed, bob, steerPx);
+        foreach (var ps in _particles)
+        {
+            if (!ps) continue;
+            var vel = ps.velocityOverLifetime; vel.speedModifier = Mathf.Lerp(0.12f, 1.15f, sNorm) * (fwd ? 1f : -0.4f);
+            ((RectTransform)ps.transform).anchoredPosition = new Vector2(bob.x * 0.6f - steerPx * 0.5f, bob.y * 0.6f);
+            if (!Application.isPlaying && dt > 0f) ps.Simulate(dt, true, false, false);
+        }
 
         if (_path)
         {
@@ -1089,6 +1365,18 @@ public class HorseRideRig : MonoBehaviour
 #endif
         return new Vector2(Mathf.Clamp(v.x, -1f, 1f), Mathf.Clamp(v.y, -1f, 1f));
     }
+
+#if UNITY_EDITOR
+    /// <summary>Editor bake: lets the builder swap every runtime-generated texture for a saved asset.</summary>
+    public void RemapTextures(System.Func<Texture2D, Texture2D> remap)
+    {
+        foreach (var img in GetComponentsInChildren<RawImage>(true))
+            if (img.texture is Texture2D t) { var n = remap(t); if (n != t) img.texture = n; }
+        if (_crowUp) _crowUp = remap(_crowUp);
+        if (_crowDown) _crowDown = remap(_crowDown);
+        for (int i = 0; i < _pineTex.Count; i++) if (_pineTex[i]) _pineTex[i] = remap(_pineTex[i]);
+    }
+#endif
 
     // Auto-spawn so the scene works even without manual setup.
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
