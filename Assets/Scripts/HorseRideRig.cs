@@ -57,9 +57,9 @@ public class HorseRideRig : MonoBehaviour
     public bool buildFog = true;
     public Color fogColor = new Color(0.78f, 0.72f, 0.68f, 1f);
     [Tooltip("Fog pixel grid (texture width in pixels)")] public int fogTexWidth = 240;
-    [Tooltip("Aerial perspective: haze in front of castle / right cliffs / spires")] public float[] layerFogAlpha = { 0.55f, 0.38f, 0.26f, 0f };
+    [Tooltip("Aerial perspective: haze in front of castle / right cliffs / spires")] public float[] layerFogAlpha = { 0.30f, 0.20f, 0.14f, 0f };
     [Tooltip("Horizontal drift speed of the fog (uv per second)")] public float fogDrift = 0.008f;
-    [Range(0, 1)] public float groundMistAlpha = 0.5f;
+    [Range(0, 1)] public float groundMistAlpha = 0.3f;
     [Tooltip("Old T_Ride_Fog texture sheets (legacy)")] public bool useLegacyFogTexture = false;
     [Range(0, 1)] public float fogAlpha = 0.35f;
     public float fogEndScale = 1.6f;
