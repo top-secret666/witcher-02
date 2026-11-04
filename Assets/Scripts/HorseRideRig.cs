@@ -85,9 +85,9 @@ public class HorseRideRig : MonoBehaviour
         new ZoomLayer{ textureName="T_Ride_Mountains",   motion=Motion.Approach, startScale=1.00f, endScale=1.05f, crossfade=false, bobAmount=0.10f, steerParallax=0.06f, tint=new Color(0.95f,0.93f,1f) },
         new ZoomLayer{ textureName="T_Ride_Castle",      motion=Motion.Approach, startScale=1.00f, endScale=1.22f, crossfade=false, bobAmount=0.15f, steerParallax=0.09f },
         new ZoomLayer{ textureName="T_Ride_Valley",      startScale=1.00f, endScale=1.18f, drift=new Vector2(  0, -30), bobAmount=0.25f, steerParallax=0.16f },
-        new ZoomLayer{ textureName="T_Ride_CliffsRight", startScale=1.00f, endScale=1.30f, drift=new Vector2( 70, -40), bobAmount=0.35f, steerParallax=0.30f },
+        new ZoomLayer{ textureName="T_Ride_CliffsRight", enabled=false, startScale=1.00f, endScale=1.30f, drift=new Vector2( 70, -40), bobAmount=0.35f, steerParallax=0.30f },
         new ZoomLayer{ textureName="T_Ride_Spires",      startScale=1.00f, endScale=1.45f, drift=new Vector2(-70, -40), bobAmount=0.55f, steerParallax=0.40f },
-        new ZoomLayer{ textureName="T_Ride_CliffLeft",   startScale=1.00f, endScale=1.90f, drift=new Vector2(-200,-30), cyclesPerLoop=2, bobAmount=0.8f, steerParallax=0.65f, tint=new Color(0.92f,0.92f,0.98f) },
+        new ZoomLayer{ textureName="T_Ride_CliffLeft",   enabled=false, startScale=1.00f, endScale=1.90f, drift=new Vector2(-200,-30), cyclesPerLoop=2, bobAmount=0.8f, steerParallax=0.65f, tint=new Color(0.92f,0.92f,0.98f) },
     };
 
     [Header("Fog (procedural dithered pixel fog)")]
@@ -118,16 +118,22 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Path colour blends to this near the horizon (fog)")] public Color pathFarColor = new Color(0.30f, 0.26f, 0.45f, 1f);
     public float pathBobAmount = 0.9f;
 
-    [Header("Pine rows along the road (perspective, endless)")]
-    public bool buildPineRows = true;
-    [Tooltip("Trees per side")] public int pinesPerSide = 16;
-    [Tooltip("World distance between trees along the road (road width = pathWorldWidth)")] public float pineSpacing = 2.6f;
-    [Tooltip("Distance of tree trunks from the road centre (world units)")] public Vector2 pineLateral = new Vector2(2.0f, 2.7f);
-    [Tooltip("Tree height in world units (camera height = cameraHeight)")] public Vector2 pineHeight = new Vector2(3.2f, 4.4f);
-    public float pineNear = 0.9f;
-    [Tooltip("Trees fade in from the fog beyond this distance")] public float pineFogStart = 6f, pineFogEnd = 34f;
-    public Color pineNearTint = new Color(0.78f, 0.80f, 0.86f, 1f);
-    public Color pineFogTint = new Color(0.36f, 0.31f, 0.55f, 1f);
+    [Header("Side rows: the CliffLeft trees / CliffsRight rocks repeated along the road edges (endless)")]
+    public bool buildSideRows = true;
+    [Tooltip("Left row sprite / right row sprites (existing side layers)")] public string leftRowTexture = "T_Ride_CliffLeftRow";
+    public string rightRowTexture = "T_Ride_CliffsRightRow";
+    [Tooltip("How much of each row sprite sinks below its ground point (its bottom is dither-faded into the mist)")] [Range(0, 0.4f)] public float sideRowSink = 0.14f;
+    [Tooltip("Chance a right-side slot uses the mirrored left trees instead of the rocks")] [Range(0, 1)] public float rightUsesTreesChance = 0.3f;
+    [Tooltip("Zoom layers hidden while the side rows are on (they are shown as rows instead)")] public string[] layersReplacedByRows = { "T_Ride_CliffLeft", "T_Ride_CliffsRight" };
+    [Tooltip("Instances per side")] public int sideRowCount = 9;
+    [Tooltip("World distance between instances along the road (road width = pathWorldWidth)")] public float sideRowSpacing = 3.6f;
+    [Tooltip("Distance of the inner edge from the road centre (world units)")] public Vector2 sideRowLateral = new Vector2(1.7f, 2.3f);
+    [Tooltip("Sprite height in world units for the trees / rocks (camera height = cameraHeight)")] public Vector2 treeRowHeight = new Vector2(6.5f, 8.5f), rockRowHeight = new Vector2(4.5f, 6f);
+    public float sideRowNear = 0.8f;
+    [Tooltip("Instances fade into the fog with distance")] public float sideRowFogStart = 4f, sideRowFogEnd = 34f;
+    public Color sideRowTint = new Color(0.92f, 0.92f, 0.98f, 1f);
+    [Tooltip("Fog colour laid over distant instances")] public Color sideRowFogColor = new Color(0.40f, 0.34f, 0.60f, 1f);
+    [Range(0, 1)] public float sideRowMaxFog = 0.8f;
 
     [Header("Horse (foreground)")]
     public bool buildHorse = true;
@@ -190,10 +196,11 @@ public class HorseRideRig : MonoBehaviour
     int _sw, _sh;
     float _t, _speed, _speedVel, _accel, _bobAmp, _gaitW, _gallopW, _stride, _prevPh, _earTimer = 2f, _earT = 1f, _steer, _distance;
     float _camY, _camV, _headY, _headV, _shake, _pathCurveNow;
-    class Pine { public RawImage img; public int side, slot; }
-    readonly List<Pine> _pines = new List<Pine>();
-    readonly List<Texture2D> _pineTex = new List<Texture2D>();
-    RectTransform _pineGroup;
+    class SideSprite { public Texture2D tex, sil; public Rect uv; public float aspect; public bool innerIsRight; }
+    class SideInst { public RawImage img, haze; public int side, slot; }
+    readonly List<SideInst> _sideInst = new List<SideInst>();
+    SideSprite _treeSprite, _rockSprite;
+    RectTransform _sideGroup;
     class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
     readonly List<Dust> _dust = new List<Dust>();
     Texture2D _dustTex;
@@ -293,7 +300,7 @@ public class HorseRideRig : MonoBehaviour
             var oc = ogo.GetComponent<Canvas>(); oc.renderMode = RenderMode.ScreenSpaceOverlay; oc.sortingOrder = 100;
             var img = MakeImage("Frame", _rt, (RectTransform)ogo.transform); img.color = Color.white;
             var fit = img.gameObject.AddComponent<AspectRatioFitter>();
-            fit.aspectMode = AspectRatioFitter.AspectMode.FitInParent; fit.aspectRatio = referenceResolution.x / referenceResolution.y;
+            fit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent; fit.aspectRatio = referenceResolution.x / referenceResolution.y;
         }
 
         canvas.renderMode = RenderMode.ScreenSpaceCamera;
@@ -342,6 +349,7 @@ public class HorseRideRig : MonoBehaviour
             var L = layers[i];
             L.a = L.b = null; L.group = null;
             if (!L.enabled) continue;
+            if (buildSideRows && System.Array.IndexOf(layersReplacedByRows, L.textureName) >= 0) continue;   // shown as endless side rows instead
             var tex = Load(L.textureName);
             if (!tex) { Debug.LogWarning("HorseRideRig: missing Resources/Ride/" + L.textureName); continue; }
             L.group = MakeGroup("L" + li + "_" + L.textureName, _world);
@@ -358,7 +366,7 @@ public class HorseRideRig : MonoBehaviour
 
         if (buildSmoke) BuildSmoke();
         if (buildPath) BuildPath();
-        if (buildPineRows) BuildPines();
+        if (buildSideRows) BuildSideRows();
         if (buildHoofDust) BuildHoofDust();
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
         BuildMotes();
@@ -625,66 +633,96 @@ public class HorseRideRig : MonoBehaviour
         }
     }
 
-    // ---------------------------------------------------------------- pine rows
-    void BuildPines()
+    // ---------------------------------------------------------------- side rows (existing side sprites along the road)
+    SideSprite MakeSideSprite(string name, bool innerIsRight)
     {
-        for (int v = 0; v < 8; v++) { var t = Load("T_Ride_Pine" + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
-        if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/T_Ride_Pine*_DF textures"); return; }
-        // same rect as the road strip so trees share the road's perspective mapping
-        _pineGroup = MakeGroup("L8b_PineRows", _world);
-        _pineGroup.anchorMin = Vector2.zero; _pineGroup.anchorMax = new Vector2(1f, pathScreenFraction);
-        _pineGroup.offsetMin = _pineGroup.offsetMax = Vector2.zero; _pineGroup.pivot = new Vector2(vanishingPoint.x, 0f);
+        var t = Load(name); if (!t) return null;
+        Color32[] px;
+        try { px = t.GetPixels32(); } catch { Debug.LogWarning("HorseRideRig: " + name + " is not readable"); return null; }
+        int W = t.width, H = t.height, x0 = W, y0 = H, x1 = -1, y1 = -1;
+        var sil = new Color32[px.Length];
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+        {
+            byte a = px[y * W + x].a; sil[y * W + x] = new Color32(255, 255, 255, a);
+            if (a > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        if (x1 < 0) return null;
+        var st = new Texture2D(W, H, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp };
+        st.SetPixels32(sil); st.Apply(false);
+        var r = new Rect((float)x0 / W, (float)y0 / H, (float)(x1 + 1 - x0) / W, (float)(y1 + 1 - y0) / H);
+        return new SideSprite { tex = t, sil = st, uv = r, aspect = (float)(x1 + 1 - x0) / (y1 + 1 - y0), innerIsRight = innerIsRight };
+    }
+
+    void BuildSideRows()
+    {
+        _treeSprite = MakeSideSprite(leftRowTexture, true);        // trees hug the left edge: their right side faces the road
+        _rockSprite = MakeSideSprite(rightRowTexture, false);      // rocks hug the right edge: their left side faces the road
+        if (_treeSprite == null && _rockSprite == null) return;
+        // same rect as the road strip so instances share the road's perspective mapping
+        _sideGroup = MakeGroup("L8b_SideRows", _world);
+        _sideGroup.anchorMin = Vector2.zero; _sideGroup.anchorMax = new Vector2(1f, pathScreenFraction);
+        _sideGroup.offsetMin = _sideGroup.offsetMax = Vector2.zero; _sideGroup.pivot = new Vector2(vanishingPoint.x, 0f);
         for (int side = -1; side <= 1; side += 2)
-            for (int i = 0; i < pinesPerSide; i++)
+            for (int i = 0; i < sideRowCount; i++)
             {
-                var img = MakeImage("Pine", _pineTex[0], _pineGroup);
-                var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0.02f);
-                _pines.Add(new Pine { img = img, side = side, slot = i });
+                var img = MakeImage(side < 0 ? "RowLeft" : "RowRight", (_treeSprite ?? _rockSprite).tex, _sideGroup);
+                var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero;
+                var haze = MakeImage("Haze", (_treeSprite ?? _rockSprite).sil, rt); haze.color = Color.clear;
+                _sideInst.Add(new SideInst { img = img, haze = haze, side = side, slot = i });
             }
     }
 
     static float Hash(int n, int side) { uint h = (uint)(n * 374761393 + side * 668265263); h = (h ^ (h >> 13)) * 1274126177u; return ((h ^ (h >> 16)) & 0xFFFF) / 65535f; }
 
-    void UpdatePines(float travel, Vector2 bob)
+    void UpdateSideRows(float travel, Vector2 bob)
     {
-        if (_pineGroup == null || _pines.Count == 0) return;
-        _pineGroup.anchoredPosition = bob * pathBobAmount;
+        if (_sideGroup == null || _sideInst.Count == 0) return;
+        _sideGroup.anchoredPosition = bob * pathBobAmount;
         float stripPx = (referenceResolution.y + 80f) * pathScreenFraction;
         float stripW = referenceResolution.x + 80f;
         float aspect = (float)pathTexWidth / pathTexHeight;
-        float baseIdx = Mathf.Floor(travel / pineSpacing);
-        float frac = travel / pineSpacing - baseIdx;
-        foreach (var p in _pines)
+        float baseIdx = Mathf.Floor(travel / sideRowSpacing);
+        float frac = travel / sideRowSpacing - baseIdx;
+        foreach (var p in _sideInst)
         {
-            int worldIdx = (int)baseIdx + p.slot;                          // identity of the tree along the endless road
+            int worldIdx = (int)baseIdx + p.slot;                          // identity of this instance along the endless road
             float stagger = p.side > 0 ? 0.5f : 0f;
-            float z = pineNear + (p.slot + stagger - frac) * pineSpacing;
-            if (z <= 0.05f) { p.img.enabled = false; continue; }
+            float z = sideRowNear + (p.slot + stagger - frac) * sideRowSpacing;
+            if (z <= 0.05f) { p.img.enabled = p.haze.enabled = false; continue; }
             float r1 = Hash(worldIdx, p.side), r2 = Hash(worldIdx * 7 + 3, p.side), r3 = Hash(worldIdx * 13 + 5, p.side);
-            float dy = cameraHeight / z;                                   // fraction of strip height below the horizon
-            float yStrip = pathHorizon - dy;                               // 0..1 inside the strip (can go below 0 = off screen)
+            SideSprite sp = p.side < 0 ? (_treeSprite ?? _rockSprite) : (r3 < rightUsesTreesChance || _rockSprite == null ? _treeSprite : _rockSprite);
+            if (sp == null) { p.img.enabled = p.haze.enabled = false; continue; }
+            bool isTree = sp == _treeSprite;
+            float dy = cameraHeight / z;
+            float yStrip = pathHorizon - dy;
             float vanish = Mathf.Lerp(pathVanishX, 0f, Mathf.Clamp01(dy)) + _pathCurveNow * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
-            float lateral = Mathf.Lerp(pineLateral.x, pineLateral.y, r1);
-            float xf = vanishingPoint.x + vanish + p.side * (lateral / z) / aspect;
-            float h = Mathf.Lerp(pineHeight.x, pineHeight.y, r2) / z * stripPx;
-            var tex = _pineTex[(int)(r3 * _pineTex.Count) % _pineTex.Count];
-            float w = h * tex.width / tex.height;
-            bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f && xf * stripW - w < stripW + 40f;
-            p.img.enabled = visible;
+            float lateral = Mathf.Lerp(sideRowLateral.x, sideRowLateral.y, r1);
+            float xf = vanishingPoint.x + vanish + p.side * (lateral / z) / aspect;   // inner (road-facing) edge
+            Vector2 hr = isTree ? treeRowHeight : rockRowHeight;
+            float h = Mathf.Lerp(hr.x, hr.y, r2) / z * stripPx;
+            float w = h * sp.aspect;
+            float innerX = xf * stripW;
+            float outerX = innerX + p.side * w;
+            bool visible = yStrip * stripPx + h > -60f && Mathf.Max(innerX, outerX) > -60f && Mathf.Min(innerX, outerX) < stripW + 60f && h > 4f;
+            p.img.enabled = p.haze.enabled = visible;
             if (!visible) continue;
-            p.img.texture = tex;
+            // the sprite's road-facing edge sits at the pivot; flip it when used on the other side
+            bool flip = sp.innerIsRight ? p.side > 0 : p.side < 0;
             var rt = p.img.rectTransform;
-            rt.anchoredPosition = new Vector2(Mathf.Round(xf * stripW / 3f) * 3f, Mathf.Round(yStrip * stripPx / 3f) * 3f);
+            rt.pivot = new Vector2(sp.innerIsRight ? 1f : 0f, sideRowSink);
+            rt.localScale = new Vector3(flip ? -1f : 1f, 1f, 1f);
+            rt.anchoredPosition = new Vector2(Mathf.Round(innerX / 3f) * 3f, Mathf.Round(yStrip * stripPx / 3f) * 3f);
             rt.sizeDelta = new Vector2(Mathf.Round(w / 3f) * 3f, Mathf.Round(h / 3f) * 3f);
-            rt.localScale = new Vector3(r1 > 0.5f ? -1f : 1f, 1f, 1f) ;   // mirror half of them for variety
-            float fog = Smooth(pineFogStart, pineFogEnd, z);
-            var c = Color.Lerp(pineNearTint, pineFogTint, fog);
-            c.a = 1f - Smooth(pineFogEnd - 4f, pineFogEnd + 2f, z);
-            p.img.color = c;
+            p.img.texture = sp.tex; p.img.uvRect = sp.uv;
+            p.haze.texture = sp.sil; p.haze.uvRect = sp.uv;
+            float fog = Smooth(sideRowFogStart, sideRowFogEnd, z) * sideRowMaxFog;
+            float alpha = 1f - Smooth(sideRowFogEnd - 6f, sideRowFogEnd + 2f, z);
+            var c = sideRowTint; c.a = alpha; p.img.color = c;
+            var hc = sideRowFogColor; hc.a = fog * alpha; p.haze.color = hc;
         }
-        // far trees first, near trees on top
-        _pines.Sort((a, b) => (b.slot + (b.side > 0 ? 0.5f : 0f)).CompareTo(a.slot + (a.side > 0 ? 0.5f : 0f)));
-        for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetSiblingIndex(i);
+        // far instances first, near ones on top
+        _sideInst.Sort((a, b) => (b.slot + (b.side > 0 ? 0.5f : 0f)).CompareTo(a.slot + (a.side > 0 ? 0.5f : 0f)));
+        for (int i = 0; i < _sideInst.Count; i++) _sideInst[i].img.transform.SetSiblingIndex(i);
     }
 
     // ---------------------------------------------------------------- hoof dust
@@ -915,7 +953,7 @@ public class HorseRideRig : MonoBehaviour
             _path.rectTransform.anchoredPosition = bob * pathBobAmount;
         }
         _pathCurveNow = pathCurve + steerEase * pathSteerCurve;
-        UpdatePines(_t / loopDuration * pathTilesPerLoop * pathTileLength, bob);
+        UpdateSideRows(_t / loopDuration * pathTilesPerLoop * pathTileLength, bob);
         UpdateHoofDust(dt, sNorm);
 
         if (_horse)
