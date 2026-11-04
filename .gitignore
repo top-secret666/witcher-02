@@ -47,3 +47,6 @@ Desktop.ini
 sysinfo.txt
 crashlytics-build.properties
 AddressableAssetsData/*/addressables_content_state.bin
+
+# Local backups, batch logs and preview renders
+/[Bb]ackup/
