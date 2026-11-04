@@ -45,7 +45,7 @@ public class HorseRideRig : MonoBehaviour
 
     [Header("Control (W forward, D right; A left / S back also work)")]
     public bool requireInput = true;
-    [Tooltip("Max forward playback speed (1 = reference video speed). Full speed = gallop.")] public float forwardSpeed = 1.3f;
+    [Tooltip("Max forward playback speed (1 = reference video speed). Full speed = gallop.")] public float forwardSpeed = 0.65f;
     [Tooltip("Max backward playback speed")] public float backwardSpeed = 0.5f;
     [Tooltip("Holding D (or A) alone makes the horse walk while turning")] public bool steerWalks = true;
     [Range(0, 1)] public float steerWalkSpeed = 0.4f;
@@ -133,8 +133,8 @@ public class HorseRideRig : MonoBehaviour
     public float pathFadeNear = 0.0f, pathFadeFar = 0.35f;
     public float pathCurve = -0.10f;
     public float pathCurvePower = 2.2f;
-    public Color pathTint = new Color(0.86f, 0.84f, 0.95f, 1f);
-    [Tooltip("Path colour blends to this near the horizon (fog)")] public Color pathFarColor = new Color(0.30f, 0.26f, 0.45f, 1f);
+    public Color pathTint = new Color(0.56f, 0.53f, 0.64f, 1f);
+    [Tooltip("Path colour blends to this near the horizon (fog)")] public Color pathFarColor = new Color(0.22f, 0.19f, 0.34f, 1f);
     public float pathBobAmount = 0.9f;
 
     [Header("Pine rows along the road (perspective, endless)")]
@@ -160,7 +160,7 @@ public class HorseRideRig : MonoBehaviour
     public float horseSteerPx = 34f, horseSteerDegrees = 3f;
 
     [Header("Gait (walk -> 3-beat canter -> 4-beat gallop, driven by speed)")]
-    [Tooltip("Strides per second")] public float walkStrideHz = 0.95f, canterStrideHz = 1.7f, gallopStrideHz = 2.25f;
+    [Tooltip("Strides per second")] public float walkStrideHz = 0.70f, canterStrideHz = 1.15f, gallopStrideHz = 1.45f;
     [Tooltip("Speed fraction where walk blends into canter")] public Vector2 canterBlend = new Vector2(0.28f, 0.55f);
     [Tooltip("Speed fraction where canter blends into gallop")] public Vector2 gallopBlend = new Vector2(0.72f, 0.95f);
     [Tooltip("Seconds to ease up to / down from full speed")] public float speedUpTime = 1.4f, slowDownTime = 0.9f;
