@@ -153,6 +153,13 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Trees fade in from the fog beyond this distance")] public float pineFogStart = 6f, pineFogEnd = 34f;
     public Color pineNearTint = new Color(0.86f, 0.86f, 0.94f, 1f);
     public Color pineFogTint = new Color(0.36f, 0.31f, 0.55f, 1f);
+    [Tooltip("Pixel undergrowth (bushes / young firs) around every tree foot, so the trees stand on the ground instead of floating")] public bool pineBushes = true;
+    [Tooltip("Bush width as a multiple of its tree's width (random between x and y)")] public Vector2 bushWidth = new Vector2(0.9f, 1.4f);
+    [Tooltip("Bush height as a fraction of the bush width")] [Range(0.15f, 0.8f)] public float bushHeight = 0.35f;
+    [Tooltip("How much of the bush sits below the tree foot (0 = bush stands on the foot, 0.5 = half sunk)")] [Range(0f, 0.9f)] public float bushSink = 0.45f;
+    [Tooltip("Bush colour multiplier (on top of the tree's fog tint)")] public Color bushTint = new Color(0.9f, 0.9f, 1f, 1f);
+    [Tooltip("Bushes draw IN FRONT of the left fog bank (so the tree feet read as standing in undergrowth); this much of the left fog colour is mixed into them")] [Range(0f, 1f)] public float bushFogMix = 0.5f;
+    [Tooltip("Bushes fade out when the tree foot is inside the solid left fog: fully hidden at leftFogFullTop + x, fully visible at leftFogFullTop + y (screen fractions)")] public Vector2 bushFogFade = new Vector2(0.04f, 0.11f);
 
     [Header("Horse (foreground)")]
     public bool buildHorse = true;
@@ -212,7 +219,7 @@ public class HorseRideRig : MonoBehaviour
 
     // ------------------------------------------------------------------ state
     // Scene objects are serialized (baked by the editor builder); simulation state is runtime only.
-    [System.Serializable] public class Pine { public RawImage img; public int side, slot, sub; [System.NonSerialized] public float depth; }
+    [System.Serializable] public class Pine { public RawImage img, bush; public int side, slot, sub; [System.NonSerialized] public float depth; }
     [System.Serializable] public class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
     [System.Serializable] public class Mote { public RawImage img; public Vector3 p; public float seed, size, speed; public bool firefly; }
     [System.Serializable] public class Crow { public RawImage img; public float x, y, speed, phase, scale; }
@@ -221,10 +228,11 @@ public class HorseRideRig : MonoBehaviour
 
     [SerializeField, HideInInspector] bool _built;
     [SerializeField, HideInInspector] Canvas _canvas;
-    [SerializeField, HideInInspector] RectTransform _root, _world, _skyGroup, _pineGroup;
+    [SerializeField, HideInInspector] RectTransform _root, _world, _skyGroup, _pineGroup, _bushGroup;
     [SerializeField, HideInInspector] RawImage _sky, _path, _horse, _rays, _moonGlow;
     [SerializeField, HideInInspector] List<Pine> _pines = new List<Pine>();
     [SerializeField, HideInInspector] List<Texture2D> _pineTex = new List<Texture2D>();
+    [SerializeField, HideInInspector] List<Texture2D> _bushTex = new List<Texture2D>();
     [SerializeField, HideInInspector] List<Dust> _dust = new List<Dust>();
     [SerializeField, HideInInspector] List<FogSheet> _fogSheets = new List<FogSheet>();
     [SerializeField, HideInInspector] List<Mote> _motes = new List<Mote>();
@@ -293,8 +301,8 @@ public class HorseRideRig : MonoBehaviour
             go.SetActive(false);
             DestroyObj(go);
         }
-        _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _dust.Clear(); _particles.Clear();
-        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _canvas = null; _root = _world = _skyGroup = null;
+        _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _bushTex.Clear(); _dust.Clear(); _particles.Clear();
+        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _bushGroup = null; _canvas = null; _root = _world = _skyGroup = null;
         foreach (var L in layers) { L.a = L.b = L.c = null; L.group = null; }
         _pathOut = null; _built = false;
     }
@@ -516,6 +524,7 @@ public class HorseRideRig : MonoBehaviour
         if (buildFog && buildRightFog && rightFogAlpha > 0f) AddSideFog("Fog_Right_Front", Group("Fog"), 1, rightFogTop - 0.16f, rightFogTop + 0.12f, rightFogAlpha, 1f, 977, rightFogColor);
         if (buildFog && buildLeftFog && leftFogAlpha > 0f) AddSideFog("Fog_Left_Front", Group("Fog"), -1, leftFogFullTop, leftFogTop, leftFogAlpha, 1f, 613, leftFogColor);
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", Group("Fog"), 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
+        if (_bushGroup) _bushGroup.SetAsLastSibling();      // undergrowth in front of the fog banks
         if (buildHoofDust) BuildHoofDust();
         if (useParticleSystems) BuildParticleSystems(); else BuildMotes();
         if (buildFog && foregroundWispAlpha > 0f) AddFogSheet("ForegroundWisps", Group("Fog"), 0.03f, 0.06f, foregroundWispAlpha, fogDrift * 5f, 517, groundMistColor, 1f);
@@ -848,9 +857,17 @@ public class HorseRideRig : MonoBehaviour
         if (_pineTex.Count == 0) for (int v = 0; v < 8; v++) { var t = Load("T_Ride_Pine" + v); if (t) { t.wrapMode = TextureWrapMode.Clamp; t.filterMode = filter; _pineTex.Add(t); } }
         if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/" + pineTexturePrefix + "*_DF textures"); return; }
         // same rect as the road strip so trees share the road's perspective mapping
+        if (pineBushes && _bushTex.Count == 0) for (int v = 0; v < 4; v++) _bushTex.Add(MakeBushTex(17 + v * 31, v));
         _pineGroup = MakeGroup("Pines_Left", Group("Trees_Left"));
         _pineGroup.anchorMin = Vector2.zero; _pineGroup.anchorMax = new Vector2(1f, pathScreenFraction);
         _pineGroup.offsetMin = _pineGroup.offsetMax = Vector2.zero; _pineGroup.pivot = new Vector2(vanishingPoint.x, 0f);
+        if (pineBushes && _bushTex.Count > 0)
+        {
+            // same rect as the pines; lives in the Fog group and is moved after the left fog bank at the end of Build()
+            _bushGroup = MakeGroup("Bushes_Left", Group("Fog"));
+            _bushGroup.anchorMin = _pineGroup.anchorMin; _bushGroup.anchorMax = _pineGroup.anchorMax;
+            _bushGroup.offsetMin = _bushGroup.offsetMax = Vector2.zero; _bushGroup.pivot = _pineGroup.pivot;
+        }
         for (int side = -1; side <= 1; side += 2)
         {
             if (side < 0 && !pinesLeft || side > 0 && !pinesRight) continue;
@@ -862,10 +879,70 @@ public class HorseRideRig : MonoBehaviour
                     var img = MakeImage("Pine" + k, _pineTex[(i + k) % _pineTex.Count], _pineGroup);
                     img.transform.SetParent(cluster, false);
                     var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0f);
-                    _pines.Add(new Pine { img = img, side = side, slot = i, sub = k });
+                    RawImage bush = null;
+                    if (pineBushes && _bushTex.Count > 0)
+                    {
+                        bush = MakeImage("Bush_" + (side < 0 ? "L" : "R") + i.ToString("00") + "_" + k, _bushTex[(i * 3 + k) % _bushTex.Count], _bushGroup);
+                        var brt = bush.rectTransform; brt.anchorMin = brt.anchorMax = Vector2.zero; brt.pivot = new Vector2(0.5f, bushSink);
+                    }
+                    _pines.Add(new Pine { img = img, bush = bush, side = side, slot = i, sub = k });
                 }
             }
         }
+    }
+
+    // Pixel undergrowth sprite: a mound of young firs / fern spikes in the trees' own palette (18-step dark teal),
+    // moon-lit tips on the left slopes, dithered into the ground at the bottom.
+    Texture2D MakeBushTex(int seed, int variant)
+    {
+        int W = 160, H = 56;   // ~same texel size as the 192 px tall tree sprites at the default bush size
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter, name = "Gen_Bush" + variant };
+        var px = new Color32[W * H];
+        Color32 outline = new Color32(0, 0, 18, 255), dark = new Color32(18, 18, 36, 255), mid = new Color32(18, 36, 36, 255),
+                midB = new Color32(36, 54, 54, 255), light = new Color32(36, 54, 72, 255), lit = new Color32(36, 72, 91, 255), tip = new Color32(54, 91, 109, 255);
+        var top = new float[W]; var litSide = new bool[W];
+        var rnd = new System.Random(seed);
+        for (int x = 0; x < W; x++)
+        {
+            float u = (x + 0.5f) / W * 2f - 1f;
+            top[x] = H * 0.42f * (1f - u * u);                                         // low base mound
+        }
+        int spikes = 11 + (variant % 3) * 2;
+        for (int s = 0; s < spikes; s++)
+        {
+            float cx = 8f + (float)rnd.NextDouble() * (W - 16);
+            float edge = 1f - Mathf.Abs(cx / W * 2f - 1f);                                    // taller in the middle
+            float hgt = H * (0.4f + 0.55f * (float)rnd.NextDouble()) * Mathf.Lerp(0.4f, 1f, edge);
+            float hw = 7f + (float)rnd.NextDouble() * 9f;
+            for (int x = 0; x < W; x++)
+            {
+                float v = hgt * (1f - Mathf.Abs(x + 0.5f - cx) / hw);
+                if (v > top[x]) { top[x] = v; litSide[x] = x + 0.5f < cx; }
+            }
+        }
+        for (int x = 0; x < W; x++) top[x] += ((x * 7 + seed) % 3 == 0) ? 1f : 0f;          // ragged needles
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float d = top[x] - y;                                                        // depth below the silhouette
+                if (d <= 0f) { px[y * W + x] = new Color32(0, 0, 0, 0); continue; }
+                Color32 c;
+                if (d < 1f) c = litSide[x] ? tip : light;
+                else if (d < 2.2f) c = litSide[x] ? lit : midB;
+                else
+                {
+                    bool branch = ((y + (x / 4) * 2 + seed) % 4) == 0;                      // fir branch strokes
+                    float n = Mathf.PerlinNoise(seed * 0.13f + x * 0.35f, y * 0.5f);
+                    c = branch ? (n > 0.5f ? midB : mid) : (n > 0.62f ? mid : (n < 0.3f ? outline : dark));
+                }
+                byte a = 255;
+                float solid = Mathf.Clamp01((y + 0.5f) / (H * 0.5f));                             // lower half melts into the fog (dithered)
+                solid = solid * solid * (3f - 2f * solid);
+                if (Bayer(x, y) >= solid) a = 0;
+                c.a = a; px[y * W + x] = c;
+            }
+        t.SetPixels32(px); t.Apply(false);
+        return t;
     }
 
     static float Hash(int n, int side) { uint h = (uint)(n * 374761393 + side * 668265263); h = (h ^ (h >> 13)) * 1274126177u; return ((h ^ (h >> 16)) & 0xFFFF) / 65535f; }
@@ -874,6 +951,7 @@ public class HorseRideRig : MonoBehaviour
     {
         if (_pineGroup == null || _pines.Count == 0) return;
         _pineGroup.anchoredPosition = bob * pathBobAmount;
+        if (_bushGroup) _bushGroup.anchoredPosition = _pineGroup.anchoredPosition;
         float stripPx = (referenceResolution.y + 80f) * pathScreenFraction;
         float stripW = referenceResolution.x + 80f;
         float aspect = (float)pathTexWidth / pathTexHeight;
@@ -900,6 +978,7 @@ public class HorseRideRig : MonoBehaviour
             float w = h * tex.width / tex.height;
             bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f - _extraPx && xf * stripW - w < stripW + 40f + _extraPx;
             p.img.enabled = visible;
+            if (p.bush) p.bush.enabled = visible;
             if (!visible) continue;
             p.img.texture = tex;
             var rt = p.img.rectTransform;
@@ -910,6 +989,21 @@ public class HorseRideRig : MonoBehaviour
             var c = Color.Lerp(pineNearTint, pineFogTint, fog);
             c.a = 1f - Smooth(pineFogEnd - 4f, pineFogEnd + 2f, z);
             p.img.color = c;
+            if (p.bush)
+            {
+                float r5 = Hash(id * 41 + 17, p.side);
+                float bw = Mathf.Max(6f, w * Mathf.Lerp(bushWidth.x, bushWidth.y, r5));
+                var brt = p.bush.rectTransform;
+                brt.pivot = new Vector2(0.5f, bushSink);
+                brt.anchoredPosition = rt.anchoredPosition + new Vector2(Mathf.Round(((r5 - 0.5f) * 0.3f + p.side * 0.2f) * bw / 3f) * 3f, 0f);   // nudged away from the road
+                brt.sizeDelta = new Vector2(Mathf.Round(bw / 3f) * 3f, Mathf.Max(3f, Mathf.Round(bw * bushHeight / 3f) * 3f));
+                brt.localScale = new Vector3(r5 > 0.5f ? -1f : 1f, 1f, 1f);
+                if (_bushTex.Count > 0) p.bush.texture = _bushTex[(int)(r5 * 997f) % _bushTex.Count];
+                // where the left fog bank is solid the tree feet are hidden anyway: bushes there would float on the fog, so fade them out
+                float footY = yStrip * pathScreenFraction;
+                var bc = Color.Lerp(c * bushTint, leftFogColor, bushFogMix); bc.a = c.a * Smooth(leftFogFullTop + bushFogFade.x, leftFogFullTop + bushFogFade.y, footY);
+                p.bush.color = bc;
+            }
         }
         // far trees first, near trees on top
         _pines.RemoveAll(q => q == null || !q.img);
@@ -918,6 +1012,7 @@ public class HorseRideRig : MonoBehaviour
             p.img.transform.parent.SetSiblingIndex(Mathf.Clamp(pinesPerSide - 1 - p.slot + (p.side > 0 ? pinesPerSide : 0), 0, _pineGroup.childCount - 1));
         _pines.Sort((a, b) => b.depth.CompareTo(a.depth));
         for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetAsLastSibling();
+        for (int i = 0; i < _pines.Count; i++) if (_pines[i].bush) _pines[i].bush.transform.SetAsLastSibling();
     }
 
     // ---------------------------------------------------------------- particle systems (fireflies, ash)
@@ -1415,6 +1510,7 @@ public class HorseRideRig : MonoBehaviour
         if (_crowUp) _crowUp = remap(_crowUp);
         if (_crowDown) _crowDown = remap(_crowDown);
         for (int i = 0; i < _pineTex.Count; i++) if (_pineTex[i]) _pineTex[i] = remap(_pineTex[i]);
+        for (int i = 0; i < _bushTex.Count; i++) if (_bushTex[i]) _bushTex[i] = remap(_bushTex[i]);
     }
 #endif
 
