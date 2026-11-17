@@ -151,6 +151,10 @@ public class HorseRideRig : MonoBehaviour
     public Color pathTint = new Color(0.56f, 0.53f, 0.64f, 1f);
     [Tooltip("Path colour blends to this near the horizon (fog)")] public Color pathFarColor = new Color(0.22f, 0.19f, 0.34f, 1f);
     public float pathBobAmount = 0.9f;
+    [Tooltip("Moonlight sheen on the cobbles: brightens the middle of the road in the mid-distance (towards the moon); 0 = off")] [Range(0f, 1f)] public float pathSheen = 0.35f;
+    public Color pathSheenColor = new Color(0.72f, 0.68f, 1f, 1f);
+    [Tooltip("Sheen width across the road (0..1 of the road width)")] [Range(0.05f, 1f)] public float pathSheenWidth = 0.28f;
+    [Tooltip("Sheen distance band (x = starts near the horizon, y = gone near the camera), as road-depth fractions")] public Vector2 pathSheenBand = new Vector2(0.04f, 0.55f);
 
     [Header("Pine rows along the road (perspective, endless)")]
     public bool buildPineRows = true;
@@ -1368,6 +1372,16 @@ public class HorseRideRig : MonoBehaviour
                 float edge = Mathf.Clamp01(Mathf.Min(u + 0.02f, 1.02f - u) * 25f);
                 byte a = (byte)(col.a * far * edge);
                 col = Color32.Lerp(new Color32((byte)(col.r * pathTint.r), (byte)(col.g * pathTint.g), (byte)(col.b * pathTint.b), 255), farC, fogK);
+                if (pathSheen > 0f)
+                {
+                    float du = (u - 0.5f) / Mathf.Max(0.01f, pathSheenWidth);
+                    float sk = pathSheen * Mathf.Exp(-du * du * 2f) * Smooth(0f, pathSheenBand.x + 0.06f, dy) * (1f - Smooth(pathSheenBand.x, pathSheenBand.y, dy));
+                    float lum = (col.r + col.g + col.b) / 765f;                                   // light the raised stone tops more than the gaps
+                    float add = 255f * sk * (0.25f + 1.5f * lum);
+                    col.r = (byte)Mathf.Min(255f, col.r + pathSheenColor.r * add);
+                    col.g = (byte)Mathf.Min(255f, col.g + pathSheenColor.g * add);
+                    col.b = (byte)Mathf.Min(255f, col.b + pathSheenColor.b * add);
+                }
                 col.a = a;
                 _dst[row + x] = col;
             }
