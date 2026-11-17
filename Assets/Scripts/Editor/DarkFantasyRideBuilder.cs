@@ -253,6 +253,16 @@ public static class DarkFantasyRideBuilder
         foreach (Transform c in t) { if (shown++ > 14) { sb.Append(new string(' ', depth * 2 + 2)).Append("... (" + t.childCount + " children)\n"); break; } DumpHierarchy(c, sb, depth + 1); }
     }
 
+    // Batch entry that KEEPS every rig setting from the scene (only rebuilds the objects + baked textures) and renders previews:
+    // Unity -batchmode -projectPath <p> -executeMethod DarkFantasyRideBuilder.BatchRebuildKeepSettings -quit
+    public static void BatchRebuildKeepSettings()
+    {
+        Build(true, false);
+        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        RenderPreview();
+        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+    }
+
     // Batch entry: Unity -batchmode -projectPath <p> -executeMethod DarkFantasyRideBuilder.BatchBuildAndPreview -quit
     public static void BatchBuildAndPreview()
     {

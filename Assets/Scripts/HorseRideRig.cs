@@ -88,13 +88,15 @@ public class HorseRideRig : MonoBehaviour
     [Range(0, 1)] public float moonRayAlpha = 0.06f;
 
     [Header("Layers (back to front, excluding sky/path/horse)")]
+    // CliffsRightWide / SpiresWide: 3x-wide textures whose sides are hand-made (asymmetric right flank, a different far island)
+    // instead of the mirror wrap that made the central rock and the right island look mirrored.
     public List<ZoomLayer> layers = new List<ZoomLayer>
     {
         new ZoomLayer{ textureName="T_Ride_Mountains",   hierarchyGroup="Background", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.95f,0.93f,1f) },
         new ZoomLayer{ textureName="T_Ride_CastleHD",    hierarchyGroup="Background", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
         new ZoomLayer{ textureName="T_Ride_Valley",      hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
-        new ZoomLayer{ textureName="T_Ride_CliffsRight", hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
-        new ZoomLayer{ textureName="T_Ride_Spires",      hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
+        new ZoomLayer{ textureName="T_Ride_CliffsRightWide", hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
+        new ZoomLayer{ textureName="T_Ride_SpiresWide",  hierarchyGroup="Midground",  motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f },
         new ZoomLayer{ textureName="T_Ride_CliffLeftWide", hierarchyGroup="Trees_Left", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.92f,0.92f,0.98f) },
     };
 
