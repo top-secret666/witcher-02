@@ -92,6 +92,9 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Moon centre in sky texture (normalized, from bottom-left)")] public Vector2 moonPos = new Vector2(0.717f, 0.798f);
     public float moonGlowSize = 520f;
     public Color moonGlowColor = new Color(0.85f, 0.75f, 1f, 0.32f);
+    [Tooltip("Faint dithered ring (22-degree halo) around the moon")] public bool buildMoonHalo = true;
+    public float moonHaloSize = 900f;
+    public Color moonHaloColor = new Color(0.8f, 0.75f, 1f, 0.07f);
     public bool buildMoonRays = true;
     [Range(0, 1)] public float moonRayAlpha = 0.06f;
 
@@ -478,6 +481,7 @@ public class HorseRideRig : MonoBehaviour
         if (_sky) SetupLayerRect(_sky);
         foreach (var L in layers) { if (L.a) SetupLayerRect(L.a); if (L.b) SetupLayerRect(L.b); if (L.c) SetupLayerRect(L.c); }
         if (_moonGlow) _moonGlow.rectTransform.anchorMin = _moonGlow.rectTransform.anchorMax = new Vector2(LayerAnchorX(moonPos.x), moonPos.y);
+        if (_moonHalo) _moonHalo.rectTransform.anchorMin = _moonHalo.rectTransform.anchorMax = new Vector2(LayerAnchorX(moonPos.x), moonPos.y);
         foreach (var p in _puffs) if (p.img) p.img.rectTransform.anchorMin = p.img.rectTransform.anchorMax = new Vector2(LayerAnchorX(p.uv.x), p.uv.y);
         SetupPathStrip();
     }
@@ -528,6 +532,7 @@ public class HorseRideRig : MonoBehaviour
         _sky = MakeImage("Sky", Load("T_Ride_Sky"), _skyGroup); SetupLayerRect(_sky); _sky.color = skyTint;
         if (buildStars) { _starsA = BuildStarSheet("Stars_A", 101); _starsB = BuildStarSheet("Stars_B", 202); }
         if (buildMoonGlow) BuildMoonGlow();
+        if (buildMoonHalo) BuildMoonHalo();
         if (buildCrows) BuildCrows();
 
         for (int i = 0; i < layers.Count; i++)
@@ -587,6 +592,25 @@ public class HorseRideRig : MonoBehaviour
 
     static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
     static float Bayer(int x, int y) { return (Bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16f; }
+
+    void BuildMoonHalo()
+    {
+        int n = 128; var t = new Texture2D(n, n, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp, name = "Gen_MoonHalo" };
+        var px = new Color32[n * n];
+        for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
+        {
+            float r = Vector2.Distance(new Vector2(x + .5f, y + .5f), new Vector2(n / 2f, n / 2f)) / (n / 2f);
+            float ring = Mathf.Exp(-Mathf.Pow((r - 0.78f) / 0.07f, 2f));               // thin soft ring
+            float inner = Mathf.Exp(-Mathf.Pow((r - 0.55f) / 0.25f, 2f)) * 0.25f;          // faint fill inside
+            float d = Mathf.Clamp01((ring + inner) * (r < 1f ? 1f : 0f));
+            float q = d * 5f + Bayer(x, y) - 0.5f; int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 5);
+            px[y * n + x] = new Color32(255, 255, 255, (byte)(lvl * 255 / 5));
+        }
+        t.SetPixels32(px); t.Apply(false);
+        _moonHalo = MakeImage("MoonHalo", t, _sky.rectTransform); _moonHalo.color = moonHaloColor;
+        var rt = _moonHalo.rectTransform;
+        rt.anchorMin = rt.anchorMax = new Vector2(LayerAnchorX(moonPos.x), moonPos.y); rt.sizeDelta = Vector2.one * moonHaloSize; rt.pivot = new Vector2(0.5f, 0.5f);
+    }
 
     RawImage BuildStarSheet(string name, int seed)
     {
@@ -1538,6 +1562,7 @@ public class HorseRideRig : MonoBehaviour
         if (_skyGroup) _skyGroup.anchoredPosition = staticScenery ? Vector2.zero : bob * skyBobAmount - new Vector2(steerPx * skySteer, 0);
         float tNow = Application.isPlaying ? Time.time : _t;
         if (_moonGlow) { var c = moonGlowColor; c.a *= 0.85f + 0.15f * Mathf.Sin(tNow * 0.8f); _moonGlow.color = c; }
+        if (_moonHalo) { var c = moonHaloColor; c.a *= 0.9f + 0.1f * Mathf.Sin(tNow * 0.31f + 1f); _moonHalo.color = c; }
         if (_starsA || _starsB)
         {
             float starPh = tNow * starTwinkleSpeed * Mathf.PI * 2f;
