@@ -114,6 +114,9 @@ public class HorseRideRig : MonoBehaviour
     [Range(0, 1)] public float rightFogAlpha = 0.9f;
     [Range(0, 1)] public float rightFogBackAlpha = 0.9f;
     [Tooltip("Fog is solid up to about here (screen fraction from bottom) = hides the foot of the right mountain")] public float rightFogTop = 0.44f;
+    [Tooltip("Back fog bank (the light fog sea at the horizon): height of its soft upper fade (screen fraction). Bigger = softer horizon, no bright line")] [Range(0.05f, 0.4f)] public float rightFogBackFade = 0.2f;
+    [Tooltip("Back fog bank: >1 thins the fog early in the fade (dims the bright edge at the horizon), 1 = old hard-ish edge")] [Range(1f, 4f)] public float rightFogBackFadePower = 2.2f;
+    [Tooltip("Back fog bank: how far below rightFogTop the fade starts (fraction of rightFogBackFade)")] [Range(0f, 1f)] public float rightFogBackFadeBelow = 0.4f;
     [Tooltip("Above the horizon the right fog starts at this design-x (keeps the castle clear and crisp)")] public float castleClearX = 0.84f;
     [Tooltip("Fog bank on the left side (over the bottom of the pines and the tall trees)")] public bool buildLeftFog = true;
     [Range(0, 1)] public float leftFogAlpha = 0.9f;
@@ -510,7 +513,8 @@ public class HorseRideRig : MonoBehaviour
             if (L.motion == Motion.Tunnel && L.tunnelCopies >= 3) { L.c = MakeImage(nice + "_C", tex, L.group); SetupLayerRect(L.c); }
             if (buildMoonRays && L.textureName.Contains("Castle")) { BuildMoonRays(parent); _rays.transform.SetSiblingIndex(L.group.GetSiblingIndex()); }   // rays behind the castle: castle stays crisp
             if (buildFog && buildRightFog && rightFogBackAlpha > 0f && L.textureName.Contains("Valley"))
-                AddSideFog("Fog_Right_Back", parent, 1, rightFogTop, rightFogTop + 0.10f, rightFogBackAlpha, 1.3f, 401, rightFogColor, 0f);
+                AddSideFog("Fog_Right_Back", parent, 1, rightFogTop - rightFogBackFade * rightFogBackFadeBelow, rightFogTop + rightFogBackFade * (1f - rightFogBackFadeBelow * 0.5f),
+                           rightFogBackAlpha, 1.3f, 401, rightFogColor, 0f, rightFogBackFadePower);
             if (buildFog && i < layerFogAlpha.Length && layerFogAlpha[i] > 0f)
             {
                 float cy = i < layerFogCenter.Length ? layerFogCenter[i] : 0.3f;
@@ -656,7 +660,7 @@ public class HorseRideRig : MonoBehaviour
 
     // Fog bank beside the road (side +1 right, -1 left). It touches the road edge (no gap), follows the road perspective,
     // is densest near the camera and thins with distance, and above fullTop breaks up into wisps that fade smoothly upward.
-    void AddSideFog(string name, RectTransform parent, int side, float fullTop, float top, float alpha, float density, int seed, Color col, float falloff = 1f)
+    void AddSideFog(string name, RectTransform parent, int side, float fullTop, float top, float alpha, float density, int seed, Color col, float falloff = 1f, float fadePower = 1f)
     {
         float ex = MaxExt, span = 1f + 2f * ex;
         int H = Mathf.Max(32, fogTexWidth) * 16 / 9 / 2, W = Mathf.RoundToInt(H * 9f / 16f * 2f * span);   // ~4 ref px per fog pixel
@@ -690,6 +694,7 @@ public class HorseRideRig : MonoBehaviour
                 float ftN = fullTop + (w2 - 0.5f) * 0.08f;
                 float u = Mathf.Clamp01((fy - ftN) / Mathf.Max(0.02f, top - ftN));
                 float vert = 1f - u * u * u * (u * (u * 6f - 15f) + 10f);    // smootherstep: very soft upward fade
+                if (fadePower != 1f) vert = Mathf.Pow(vert, fadePower);       // thins out early: no bright solid edge at the top
                 vert *= Mathf.Lerp(1f, Mathf.Clamp01(w2 * 1.7f - 0.25f), Smooth(0f, 0.7f, u));        // higher up it disperses into wisps
                 float d = Mathf.Clamp01(horiz * vert * nearK * density * (0.8f + (n - 0.5f) * 0.9f));
                 float q = d * Levels + Bayer(x, y) - 0.5f;
