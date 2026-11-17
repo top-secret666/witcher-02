@@ -79,6 +79,14 @@ public class HorseRideRig : MonoBehaviour
     public float skySteer = 0.03f;
     public Color skyTint = Color.white;
 
+    [Header("Twinkling stars (two sparse pixel star sheets fading in and out of phase)")]
+    public bool buildStars = true;
+    [Tooltip("Stars per sheet")] public int starCount = 70;
+    [Range(0, 1)] public float starAlpha = 0.55f;
+    [Tooltip("Twinkle speed (cycles per second)")] public float starTwinkleSpeed = 0.35f;
+    [Tooltip("Stars only above this height (screen fraction from the bottom)")] [Range(0, 1)] public float starMinY = 0.6f;
+    public Color starColor = new Color(0.9f, 0.88f, 1f, 1f);
+
     [Header("Moon")]
     public bool buildMoonGlow = true;
     [Tooltip("Moon centre in sky texture (normalized, from bottom-left)")] public Vector2 moonPos = new Vector2(0.717f, 0.798f);
@@ -256,7 +264,7 @@ public class HorseRideRig : MonoBehaviour
     [SerializeField, HideInInspector] bool _built;
     [SerializeField, HideInInspector] Canvas _canvas;
     [SerializeField, HideInInspector] RectTransform _root, _world, _skyGroup, _pineGroup, _bushGroup;
-    [SerializeField, HideInInspector] RawImage _undergrowth;
+    [SerializeField, HideInInspector] RawImage _undergrowth, _starsA, _starsB, _moonHalo, _vignette;
     [SerializeField, HideInInspector] Texture2D _shadowTex;
     [SerializeField, HideInInspector] RawImage _sky, _path, _horse, _rays, _moonGlow;
     [SerializeField, HideInInspector] List<Pine> _pines = new List<Pine>();
@@ -331,7 +339,7 @@ public class HorseRideRig : MonoBehaviour
             DestroyObj(go);
         }
         _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _bushTex.Clear(); _dust.Clear(); _particles.Clear();
-        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _bushGroup = null; _undergrowth = null; _shadowTex = null; _canvas = null; _root = _world = _skyGroup = null;
+        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _bushGroup = null; _undergrowth = null; _shadowTex = null; _starsA = _starsB = _moonHalo = _vignette = null; _canvas = null; _root = _world = _skyGroup = null;
         foreach (var L in layers) { L.a = L.b = L.c = null; L.group = null; }
         _pathOut = null; _built = false;
     }
@@ -518,6 +526,7 @@ public class HorseRideRig : MonoBehaviour
         // Sky + moon glow + crows
         _skyGroup = Group("Sky");
         _sky = MakeImage("Sky", Load("T_Ride_Sky"), _skyGroup); SetupLayerRect(_sky); _sky.color = skyTint;
+        if (buildStars) { _starsA = BuildStarSheet("Stars_A", 101); _starsB = BuildStarSheet("Stars_B", 202); }
         if (buildMoonGlow) BuildMoonGlow();
         if (buildCrows) BuildCrows();
 
@@ -578,6 +587,32 @@ public class HorseRideRig : MonoBehaviour
 
     static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
     static float Bayer(int x, int y) { return (Bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16f; }
+
+    RawImage BuildStarSheet(string name, int seed)
+    {
+        int W = 480, H = 284;                                                       // ~4 ref px per star pixel over the world rect
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp, name = "Gen_" + name };
+        var px = new Color32[W * H];
+        var rnd = new System.Random(seed);
+        int y0 = Mathf.Clamp(Mathf.RoundToInt(starMinY * H), 0, H - 2);
+        for (int i = 0; i < Mathf.Max(0, starCount); i++)
+        {
+            int x = rnd.Next(1, W - 1), y = rnd.Next(y0, H - 1);
+            byte a = (byte)(140 + rnd.Next(0, 115));
+            px[y * W + x] = new Color32(255, 255, 255, a);
+            if (rnd.NextDouble() < 0.18)                                            // a few brighter "cross" stars
+            {
+                byte b = (byte)(a / 3);
+                px[y * W + x - 1] = px[y * W + x + 1] = new Color32(255, 255, 255, b);
+                px[(y - 1) * W + x] = px[(y + 1) * W + x] = new Color32(255, 255, 255, b);
+            }
+        }
+        t.SetPixels32(px); t.Apply(false);
+        var img = MakeImage(name, t, _skyGroup); img.color = starColor;
+        float ex = MaxExt;
+        img.rectTransform.offsetMin = new Vector2(-ex * WorldW * 0.5f, 0); img.rectTransform.offsetMax = new Vector2(ex * WorldW * 0.5f, 0);
+        return img;
+    }
 
     void BuildMoonGlow()
     {
@@ -1503,6 +1538,13 @@ public class HorseRideRig : MonoBehaviour
         if (_skyGroup) _skyGroup.anchoredPosition = staticScenery ? Vector2.zero : bob * skyBobAmount - new Vector2(steerPx * skySteer, 0);
         float tNow = Application.isPlaying ? Time.time : _t;
         if (_moonGlow) { var c = moonGlowColor; c.a *= 0.85f + 0.15f * Mathf.Sin(tNow * 0.8f); _moonGlow.color = c; }
+        if (_starsA || _starsB)
+        {
+            float starPh = tNow * starTwinkleSpeed * Mathf.PI * 2f;
+            float ka = 0.55f + 0.45f * Mathf.Sin(starPh), kb = 0.55f + 0.45f * Mathf.Sin(starPh * 1.37f + 2.1f);
+            if (_starsA) { var c = starColor; c.a = starAlpha * ka; _starsA.color = c; }
+            if (_starsB) { var c = starColor; c.a = starAlpha * kb; _starsB.color = c; }
+        }
 
         float approach = 1f - Mathf.Exp(-_distance / Mathf.Max(1f, approachSeconds));
         foreach (var L in layers)
