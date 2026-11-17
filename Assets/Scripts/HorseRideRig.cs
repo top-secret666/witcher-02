@@ -167,12 +167,22 @@ public class HorseRideRig : MonoBehaviour
     public Color pineNearTint = new Color(0.86f, 0.86f, 0.94f, 1f);
     public Color pineFogTint = new Color(0.36f, 0.31f, 0.55f, 1f);
     [Tooltip("Pixel undergrowth (bushes / young firs) around every tree foot, so the trees stand on the ground instead of floating")] public bool pineBushes = true;
-    [Tooltip("Bush width as a multiple of its tree's width (random between x and y)")] public Vector2 bushWidth = new Vector2(0.9f, 1.4f);
+    [Tooltip("Bush width as a multiple of its tree's width (random between x and y)")] public Vector2 bushWidth = new Vector2(1.3f, 1.9f);
     [Tooltip("Bush height as a fraction of the bush width")] [Range(0.15f, 0.8f)] public float bushHeight = 0.35f;
-    [Tooltip("How much of the bush sits below the tree foot (0 = bush stands on the foot, 0.5 = half sunk)")] [Range(0f, 0.9f)] public float bushSink = 0.45f;
+    [Tooltip("How much of the bush sits below the tree foot (0 = bush stands on the foot, 0.5 = half sunk)")] [Range(0f, 0.9f)] public float bushSink = 0.55f;
     [Tooltip("Bush colour multiplier (on top of the tree's fog tint)")] public Color bushTint = new Color(0.9f, 0.9f, 1f, 1f);
-    [Tooltip("Bushes draw IN FRONT of the left fog bank (so the tree feet read as standing in undergrowth); this much of the left fog colour is mixed into them")] [Range(0f, 1f)] public float bushFogMix = 0.5f;
-    [Tooltip("Bushes fade out when the tree foot is inside the solid left fog: fully hidden at leftFogFullTop + x, fully visible at leftFogFullTop + y (screen fractions)")] public Vector2 bushFogFade = new Vector2(0.04f, 0.11f);
+    [Tooltip("How much of the left fog colour is mixed into the bushes (they sit behind the left fog bank, so the fog tints their lower part anyway)")] [Range(0f, 1f)] public float bushFogMix = 0.3f;
+    [Tooltip("Side bushes per clump (0..2): smaller bushes left/right of the main one, overlapping it")] [Range(0, 2)] public int bushClumpSides = 2;
+    [Tooltip("Side bush size relative to the main bush")] [Range(0.3f, 1f)] public float bushSideScale = 0.75f;
+    [Tooltip("Where the tree foot is inside the solid fog, the clump grows taller so its top rises this far ABOVE leftFogFullTop (screen fraction); 0 = off")] [Range(0f, 0.2f)] public float bushRiseAboveFog = 0.05f;
+    [Tooltip("Max height growth of a clump that rises out of the fog (x normal height)")] [Range(1f, 6f)] public float bushRiseMax = 3.5f;
+    [Tooltip("Dark contact shadow under every clump (alpha 0 = off)")] [Range(0f, 1f)] public float bushShadowAlpha = 0.85f;
+    [Tooltip("Contact shadow width relative to the clump")] public float bushShadowWidth = 1.7f;
+    [Header("Undergrowth strip (dark bushy ground under the whole left tree line)")]
+    public bool buildUndergrowth = true;
+    [Tooltip("Bushy top edge rises up to this much above the horizon (screen fraction)")] [Range(0f, 0.15f)] public float undergrowthHeight = 0.08f;
+    [Tooltip("Gap between the undergrowth and the road edge (fraction of the road half-width)")] [Range(-0.3f, 1f)] public float undergrowthRoadGap = 0.1f;
+    public Color undergrowthTint = new Color(0.85f, 0.82f, 0.95f, 1f);
 
     [Header("Horse (foreground)")]
     public bool buildHorse = true;
@@ -232,7 +242,7 @@ public class HorseRideRig : MonoBehaviour
 
     // ------------------------------------------------------------------ state
     // Scene objects are serialized (baked by the editor builder); simulation state is runtime only.
-    [System.Serializable] public class Pine { public RawImage img, bush; public int side, slot, sub; [System.NonSerialized] public float depth; }
+    [System.Serializable] public class Pine { public RawImage img, bush, bushL, bushR, shadow; public int side, slot, sub; [System.NonSerialized] public float depth; }
     [System.Serializable] public class Dust { public RawImage img; public float age = 99f, life, side; public Vector2 vel, pos; }
     [System.Serializable] public class Mote { public RawImage img; public Vector3 p; public float seed, size, speed; public bool firefly; }
     [System.Serializable] public class Crow { public RawImage img; public float x, y, speed, phase, scale; }
@@ -242,6 +252,8 @@ public class HorseRideRig : MonoBehaviour
     [SerializeField, HideInInspector] bool _built;
     [SerializeField, HideInInspector] Canvas _canvas;
     [SerializeField, HideInInspector] RectTransform _root, _world, _skyGroup, _pineGroup, _bushGroup;
+    [SerializeField, HideInInspector] RawImage _undergrowth;
+    [SerializeField, HideInInspector] Texture2D _shadowTex;
     [SerializeField, HideInInspector] RawImage _sky, _path, _horse, _rays, _moonGlow;
     [SerializeField, HideInInspector] List<Pine> _pines = new List<Pine>();
     [SerializeField, HideInInspector] List<Texture2D> _pineTex = new List<Texture2D>();
@@ -315,7 +327,7 @@ public class HorseRideRig : MonoBehaviour
             DestroyObj(go);
         }
         _fogSheets.Clear(); _motes.Clear(); _crows.Clear(); _puffs.Clear(); _pines.Clear(); _pineTex.Clear(); _bushTex.Clear(); _dust.Clear(); _particles.Clear();
-        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _bushGroup = null; _canvas = null; _root = _world = _skyGroup = null;
+        _sky = _path = _horse = _rays = _moonGlow = null; _pineGroup = null; _bushGroup = null; _undergrowth = null; _shadowTex = null; _canvas = null; _root = _world = _skyGroup = null;
         foreach (var L in layers) { L.a = L.b = L.c = null; L.group = null; }
         _pathOut = null; _built = false;
     }
@@ -539,7 +551,6 @@ public class HorseRideRig : MonoBehaviour
         if (buildFog && buildRightFog && rightFogAlpha > 0f) AddSideFog("Fog_Right_Front", Group("Fog"), 1, rightFogTop - 0.16f, rightFogTop + 0.12f, rightFogAlpha, 1f, 977, rightFogColor);
         if (buildFog && buildLeftFog && leftFogAlpha > 0f) AddSideFog("Fog_Left_Front", Group("Fog"), -1, leftFogFullTop, leftFogTop, leftFogAlpha, 1f, 613, leftFogColor);
         if (buildFog && groundMistAlpha > 0f) AddFogSheet("GroundMist", Group("Fog"), 0.30f, 0.07f, groundMistAlpha, fogDrift * 3f, 911, groundMistColor, 0.8f);
-        if (_bushGroup) _bushGroup.SetAsLastSibling();      // undergrowth in front of the fog banks
         if (buildHoofDust) BuildHoofDust();
         if (useParticleSystems) BuildParticleSystems(); else BuildMotes();
         if (buildFog && foregroundWispAlpha > 0f) AddFogSheet("ForegroundWisps", Group("Fog"), 0.03f, 0.06f, foregroundWispAlpha, fogDrift * 5f, 517, groundMistColor, 1f);
@@ -903,13 +914,16 @@ public class HorseRideRig : MonoBehaviour
         if (_pineTex.Count == 0) { Debug.LogWarning("HorseRideRig: no Resources/Ride/" + pineTexturePrefix + "*_DF textures"); return; }
         // same rect as the road strip so trees share the road's perspective mapping
         if (pineBushes && _bushTex.Count == 0) for (int v = 0; v < 4; v++) _bushTex.Add(MakeBushTex(17 + v * 31, v));
+        if (buildUndergrowth) BuildUndergrowth(Group("Trees_Left"));    // behind the pines, in front of the tall tree wall
         _pineGroup = MakeGroup("Pines_Left", Group("Trees_Left"));
         _pineGroup.anchorMin = Vector2.zero; _pineGroup.anchorMax = new Vector2(1f, pathScreenFraction);
         _pineGroup.offsetMin = _pineGroup.offsetMax = Vector2.zero; _pineGroup.pivot = new Vector2(vanishingPoint.x, 0f);
         if (pineBushes && _bushTex.Count > 0)
         {
-            // same rect as the pines; lives in the Fog group and is moved after the left fog bank at the end of Build()
-            _bushGroup = MakeGroup("Bushes_Left", Group("Fog"));
+            // same rect as the pines, drawn right after them and BEHIND the left fog bank: the fog tints the clumps' lower part,
+            // their tops rise out of it (see bushRiseAboveFog)
+            _bushGroup = MakeGroup("Bushes_Left", Group("Trees_Left"));
+            if (!_shadowTex) _shadowTex = MakeShadowTex();
             _bushGroup.anchorMin = _pineGroup.anchorMin; _bushGroup.anchorMax = _pineGroup.anchorMax;
             _bushGroup.offsetMin = _bushGroup.offsetMax = Vector2.zero; _bushGroup.pivot = _pineGroup.pivot;
         }
@@ -924,13 +938,18 @@ public class HorseRideRig : MonoBehaviour
                     var img = MakeImage("Pine" + k, _pineTex[(i + k) % _pineTex.Count], _pineGroup);
                     img.transform.SetParent(cluster, false);
                     var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0f);
-                    RawImage bush = null;
+                    RawImage bush = null, bushL = null, bushR = null, shadow = null;
                     if (pineBushes && _bushTex.Count > 0)
                     {
-                        bush = MakeImage("Bush_" + (side < 0 ? "L" : "R") + i.ToString("00") + "_" + k, _bushTex[(i * 3 + k) % _bushTex.Count], _bushGroup);
-                        var brt = bush.rectTransform; brt.anchorMin = brt.anchorMax = Vector2.zero; brt.pivot = new Vector2(0.5f, bushSink);
+                        string bn = "Bush_" + (side < 0 ? "L" : "R") + i.ToString("00") + "_" + k;
+                        shadow = MakeImage(bn + "_Shadow", _shadowTex, _bushGroup);
+                        if (bushClumpSides >= 1) bushL = MakeImage(bn + "_a", _bushTex[(i * 3 + k + 1) % _bushTex.Count], _bushGroup);
+                        if (bushClumpSides >= 2) bushR = MakeImage(bn + "_b", _bushTex[(i * 3 + k + 2) % _bushTex.Count], _bushGroup);
+                        bush = MakeImage(bn, _bushTex[(i * 3 + k) % _bushTex.Count], _bushGroup);
+                        foreach (var bi in new[] { shadow, bushL, bushR, bush })
+                            if (bi) { var brt = bi.rectTransform; brt.anchorMin = brt.anchorMax = Vector2.zero; brt.pivot = new Vector2(0.5f, bushSink); }
                     }
-                    _pines.Add(new Pine { img = img, bush = bush, side = side, slot = i, sub = k });
+                    _pines.Add(new Pine { img = img, bush = bush, bushL = bushL, bushR = bushR, shadow = shadow, side = side, slot = i, sub = k });
                 }
             }
         }
@@ -938,6 +957,92 @@ public class HorseRideRig : MonoBehaviour
 
     // Pixel undergrowth sprite: a mound of young firs / fern spikes in the trees' own palette (18-step dark teal),
     // moon-lit tips on the left slopes, dithered into the ground at the bottom.
+    // Soft dark ellipse (dithered) under every bush clump: the "contact shadow" that glues the clump to the ground.
+    Texture2D MakeShadowTex()
+    {
+        int W = 64, H = 16;
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter, name = "Gen_BushShadow" };
+        var px = new Color32[W * H];
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float u = (x + 0.5f) / W * 2f - 1f, v = (y + 0.5f) / H * 2f - 1f;
+                float d = Mathf.Clamp01(1.25f - Mathf.Sqrt(u * u + v * v));
+                d = d * d * (3f - 2f * d);
+                px[y * W + x] = new Color32(255, 255, 255, (byte)(Bayer(x, y) < d ? 255 : 0));
+            }
+        t.SetPixels32(px); t.Apply(false);
+        return t;
+    }
+
+    // Dark bushy ground under the whole left tree line: fills everything left of the road below the horizon and rises above
+    // it in a ragged bush silhouette, so the tall tree wall and the pines all root in undergrowth (behind the left fog bank).
+    void BuildUndergrowth(RectTransform parent)
+    {
+        float ex = MaxExt, span = 1f + 2f * ex;
+        float hz = pathHorizon * pathScreenFraction;
+        float topMax = Mathf.Min(1f, hz + undergrowthHeight + 0.02f);
+        const float TexelPx = 3f;                                                     // same pixel size as the trees / bushes
+        int H = Mathf.Max(16, Mathf.RoundToInt((referenceResolution.y + 80f) * topMax / TexelPx));
+        int W = Mathf.Min(4096, Mathf.RoundToInt(WorldW * span / TexelPx));
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter, name = "Gen_Undergrowth_Left" };
+        var px = new Color32[W * H];
+        float aspect = (float)pathTexWidth / pathTexHeight;
+        Color32 outline = new Color32(0, 0, 18, 255), dark = new Color32(18, 18, 36, 255), mid = new Color32(18, 36, 36, 255),
+                midB = new Color32(36, 54, 54, 255), light = new Color32(36, 54, 72, 255), lit = new Color32(36, 72, 91, 255);
+        // ragged top silhouette (in texels): overlapping young-fir spikes, taller away from the road
+        var top = new float[W]; var litSide = new bool[W];
+        float hzT = hz / topMax * H, ampT = undergrowthHeight / topMax * H;
+        for (int x = 0; x < W; x++) top[x] = hzT + ampT * (0.15f + 0.35f * Mathf.PerlinNoise(x * 0.012f, 3.1f) + 0.12f * Mathf.PerlinNoise(x * 0.06f, 7.7f));   // rolling bush mounds
+        var rnd = new System.Random(4242);
+        int spikes = W / 4;
+        for (int s = 0; s < spikes; s++)
+        {
+            float cx = (float)rnd.NextDouble() * W;
+            float xd = cx / W * span - ex;
+            float away = Mathf.Clamp01((vanishingPoint.x - xd) / 0.6f);                  // 0 at the road .. 1 far left
+            float r = (float)rnd.NextDouble(); float hgt = hzT + ampT * (0.3f + 0.7f * r * r) * Mathf.Lerp(0.45f, 1f, away);
+            float hw = 5f + (float)rnd.NextDouble() * 12f;
+            for (int x = Mathf.Max(0, (int)(cx - hw)); x < Mathf.Min(W, (int)(cx + hw) + 1); x++)
+            {
+                float v = hgt - (hgt - hzT) * Mathf.Abs(x + 0.5f - cx) / hw;
+                if (v > top[x]) { top[x] = v; litSide[x] = x + 0.5f < cx; }
+            }
+        }
+        for (int y = 0; y < H; y++)
+        {
+            float fy = (y + 0.5f) / H * topMax;                                            // world fraction from the bottom
+            float dy = Mathf.Clamp(pathHorizon - fy / Mathf.Max(0.05f, pathScreenFraction), 0f, 1.5f);
+            float curve = pathCurve * Mathf.Pow(1f - Mathf.Clamp01(dy), pathCurvePower);
+            float half = (pathWorldWidth * 0.5f * dy) / aspect;
+            float roadEdge = vanishingPoint.x + curve - half * (0.86f + undergrowthRoadGap);
+            for (int x = 0; x < W; x++)
+            {
+                float xd = (x + 0.5f) / W * span - ex;
+                float edgeN = roadEdge - (Mathf.PerlinNoise(x * 0.05f, y * 0.05f) - 0.3f) * 0.02f;   // ragged border at the road
+                float d = top[x] - y;
+                if (d <= 0f || xd > edgeN) { px[y * W + x] = new Color32(0, 0, 0, 0); continue; }
+                Color32 c;
+                if (d < 1f) c = litSide[x] ? lit : light;
+                else if (d < 2.2f) c = litSide[x] ? light : midB;
+                else
+                {
+                    bool branch = ((y + (x / 4) * 2) % 4) == 0;
+                    float n = Mathf.PerlinNoise(x * 0.33f, y * 0.45f);
+                    c = branch ? (n > 0.5f ? midB : mid) : (n > 0.62f ? mid : (n < 0.3f ? outline : dark));
+                    if (d > 14f && n < 0.55f) c = outline;                                   // deeper = darker
+                }
+                px[y * W + x] = c;
+            }
+        }
+        t.SetPixels32(px); t.Apply(false);
+        _undergrowth = MakeImage("Undergrowth_Left", t, parent);
+        _undergrowth.color = Color.Lerp(undergrowthTint, leftFogColor, bushFogMix * 0.5f);
+        var rt = _undergrowth.rectTransform;
+        rt.anchorMin = Vector2.zero; rt.anchorMax = new Vector2(1f, topMax);
+        rt.offsetMin = new Vector2(-ex * WorldW, 0); rt.offsetMax = new Vector2(ex * WorldW, 0);
+    }
+
     Texture2D MakeBushTex(int seed, int variant)
     {
         int W = 160, H = 56;   // ~same texel size as the 192 px tall tree sprites at the default bush size
@@ -981,7 +1086,7 @@ public class HorseRideRig : MonoBehaviour
                     c = branch ? (n > 0.5f ? midB : mid) : (n > 0.62f ? mid : (n < 0.3f ? outline : dark));
                 }
                 byte a = 255;
-                float solid = Mathf.Clamp01((y + 0.5f) / (H * 0.5f));                             // lower half melts into the fog (dithered)
+                float solid = Mathf.Clamp01((y + 0.5f) / (H * 0.12f));                            // solid body, only the last rows dither into the ground
                 solid = solid * solid * (3f - 2f * solid);
                 if (Bayer(x, y) >= solid) a = 0;
                 c.a = a; px[y * W + x] = c;
@@ -1023,7 +1128,7 @@ public class HorseRideRig : MonoBehaviour
             float w = h * tex.width / tex.height;
             bool visible = yStrip > -0.05f - h / stripPx && xf * stripW + w > -40f - _extraPx && xf * stripW - w < stripW + 40f + _extraPx;
             p.img.enabled = visible;
-            if (p.bush) p.bush.enabled = visible;
+            foreach (var bi in new[] { p.bush, p.bushL, p.bushR, p.shadow }) if (bi) bi.enabled = visible;
             if (!visible) continue;
             p.img.texture = tex;
             var rt = p.img.rectTransform;
@@ -1036,18 +1141,32 @@ public class HorseRideRig : MonoBehaviour
             p.img.color = c;
             if (p.bush)
             {
-                float r5 = Hash(id * 41 + 17, p.side);
+                float r5 = Hash(id * 41 + 17, p.side), r6 = Hash(id * 53 + 23, p.side);
                 float bw = Mathf.Max(6f, w * Mathf.Lerp(bushWidth.x, bushWidth.y, r5));
-                var brt = p.bush.rectTransform;
-                brt.pivot = new Vector2(0.5f, bushSink);
-                brt.anchoredPosition = rt.anchoredPosition + new Vector2(Mathf.Round(((r5 - 0.5f) * 0.3f + p.side * 0.2f) * bw / 3f) * 3f, 0f);   // nudged away from the road
-                brt.sizeDelta = new Vector2(Mathf.Round(bw / 3f) * 3f, Mathf.Max(3f, Mathf.Round(bw * bushHeight / 3f) * 3f));
-                brt.localScale = new Vector3(r5 > 0.5f ? -1f : 1f, 1f, 1f);
+                float bh = bw * bushHeight;
+                // foot inside the solid fog -> the clump grows so its top rises out of the fog and the tree visibly roots in it
+                float footY = yStrip * pathScreenFraction;                       // screen fraction from the bottom
+                float wantTop = leftFogFullTop + bushRiseAboveFog;
+                if (bushRiseAboveFog > 0f && footY + bh * (1f - bushSink) / (referenceResolution.y + 80f) < wantTop)
+                    bh = Mathf.Min(bh * bushRiseMax, (wantTop - footY) * (referenceResolution.y + 80f) / Mathf.Max(0.1f, 1f - bushSink));
+                Vector2 foot = rt.anchoredPosition + new Vector2(p.side * 0.12f * bw, 0f);   // nudged away from the road
+                var bc = Color.Lerp(c * bushTint, leftFogColor, bushFogMix); bc.a = c.a;
+                void Place(RawImage bi, float dx, float sw, float sh, float flip, Color col)
+                {
+                    if (!bi) return;
+                    var brt = bi.rectTransform;
+                    brt.pivot = new Vector2(0.5f, bushSink);
+                    brt.anchoredPosition = foot + new Vector2(Mathf.Round(dx / 3f) * 3f, 0f);
+                    brt.sizeDelta = new Vector2(Mathf.Max(3f, Mathf.Round(sw / 3f) * 3f), Mathf.Max(3f, Mathf.Round(sh / 3f) * 3f));
+                    brt.localScale = new Vector3(flip, 1f, 1f);
+                    bi.color = col;
+                }
+                Place(p.shadow, 0f, bw * bushShadowWidth, Mathf.Max(bh * 0.55f, bw * 0.22f), 1f, new Color(0f, 0f, 0.02f, bushShadowAlpha * c.a));
+                float sb = bushSideScale;
+                Place(p.bushL, -bw * 0.42f, bw * sb, bh * Mathf.Lerp(0.8f, 1f, r6) * sb / Mathf.Max(0.3f, sb), r6 > 0.5f ? 1f : -1f, bc * new Color(0.9f, 0.9f, 0.95f, 1f));
+                Place(p.bushR, bw * 0.40f, bw * sb * 0.9f, bh * Mathf.Lerp(0.7f, 0.95f, r5) * sb / Mathf.Max(0.3f, sb), r5 > 0.5f ? -1f : 1f, bc * new Color(0.85f, 0.85f, 0.9f, 1f));
+                Place(p.bush, (r5 - 0.5f) * 0.2f * bw, bw, bh, r5 > 0.5f ? -1f : 1f, bc);
                 if (_bushTex.Count > 0) p.bush.texture = _bushTex[(int)(r5 * 997f) % _bushTex.Count];
-                // where the left fog bank is solid the tree feet are hidden anyway: bushes there would float on the fog, so fade them out
-                float footY = yStrip * pathScreenFraction;
-                var bc = Color.Lerp(c * bushTint, leftFogColor, bushFogMix); bc.a = c.a * Smooth(leftFogFullTop + bushFogFade.x, leftFogFullTop + bushFogFade.y, footY);
-                p.bush.color = bc;
             }
         }
         // far trees first, near trees on top
@@ -1057,7 +1176,8 @@ public class HorseRideRig : MonoBehaviour
             p.img.transform.parent.SetSiblingIndex(Mathf.Clamp(pinesPerSide - 1 - p.slot + (p.side > 0 ? pinesPerSide : 0), 0, _pineGroup.childCount - 1));
         _pines.Sort((a, b) => b.depth.CompareTo(a.depth));
         for (int i = 0; i < _pines.Count; i++) _pines[i].img.transform.SetAsLastSibling();
-        for (int i = 0; i < _pines.Count; i++) if (_pines[i].bush) _pines[i].bush.transform.SetAsLastSibling();
+        for (int i = 0; i < _pines.Count; i++)
+            foreach (var bi in new[] { _pines[i].shadow, _pines[i].bushL, _pines[i].bushR, _pines[i].bush }) if (bi) bi.transform.SetAsLastSibling();   // far clumps first; shadow under bushes
     }
 
     // ---------------------------------------------------------------- particle systems (fireflies, ash)
@@ -1562,6 +1682,7 @@ public class HorseRideRig : MonoBehaviour
             if (img.texture is Texture2D t) { var n = remap(t); if (n != t) img.texture = n; }
         if (_crowUp) _crowUp = remap(_crowUp);
         if (_crowDown) _crowDown = remap(_crowDown);
+        if (_shadowTex) _shadowTex = remap(_shadowTex);
         for (int i = 0; i < _pineTex.Count; i++) if (_pineTex[i]) _pineTex[i] = remap(_pineTex[i]);
         for (int i = 0; i < _bushTex.Count; i++) if (_bushTex[i]) _bushTex[i] = remap(_bushTex[i]);
     }
