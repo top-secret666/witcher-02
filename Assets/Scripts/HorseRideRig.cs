@@ -87,6 +87,12 @@ public class HorseRideRig : MonoBehaviour
     [Tooltip("Stars only above this height (screen fraction from the bottom)")] [Range(0, 1)] public float starMinY = 0.6f;
     public Color starColor = new Color(0.9f, 0.88f, 1f, 1f);
 
+    [Header("Edge vignette (dithered pixel darkening of the screen corners, over everything)")]
+    public bool buildVignette = true;
+    [Range(0, 1)] public float vignetteAlpha = 0.45f;
+    [Tooltip("Where the darkening starts (0 = centre .. 1 = edges)")] [Range(0, 1)] public float vignetteStart = 0.55f;
+    public Color vignetteColor = new Color(0.03f, 0.01f, 0.07f, 1f);
+
     [Header("Moon")]
     public bool buildMoonGlow = true;
     [Tooltip("Moon centre in sky texture (normalized, from bottom-left)")] public Vector2 moonPos = new Vector2(0.717f, 0.798f);
@@ -585,6 +591,7 @@ public class HorseRideRig : MonoBehaviour
                 rt.sizeDelta = new Vector2(h * htex.width / (float)htex.height, h);
             }
         }
+        if (buildVignette) BuildVignette();
         _built = true;
         Relayout();
         Tick(0f);
@@ -592,6 +599,25 @@ public class HorseRideRig : MonoBehaviour
 
     static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
     static float Bayer(int x, int y) { return (Bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16f; }
+
+    void BuildVignette()
+    {
+        int W = 160, H = 90;
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { filterMode = filter, wrapMode = TextureWrapMode.Clamp, name = "Gen_Vignette" };
+        var px = new Color32[W * H];
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+        {
+            float u = (x + .5f) / W * 2f - 1f, v = (y + .5f) / H * 2f - 1f;
+            float r = Mathf.Sqrt(u * u * 0.8f + v * v * 1.1f) / 1.2f;
+            float d = Smooth(vignetteStart, 1.05f, r);
+            float q = d * 8f + Bayer(x, y) - 0.5f; int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, 8);
+            px[y * W + x] = new Color32(255, 255, 255, (byte)(lvl * 255 / 8));
+        }
+        t.SetPixels32(px); t.Apply(false);
+        _vignette = MakeImage("09_Vignette", t, _root);              // stretched over the whole screen, after the horse
+        var c = vignetteColor; c.a = vignetteAlpha; _vignette.color = c;
+        _vignette.transform.SetAsLastSibling();
+    }
 
     void BuildMoonHalo()
     {
