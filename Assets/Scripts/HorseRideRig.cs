@@ -100,6 +100,16 @@ public class HorseRideRig : MonoBehaviour
         new ZoomLayer{ textureName="T_Ride_CliffLeftWide", hierarchyGroup="Trees_Left", motion=Motion.Static, crossfade=false, bobAmount=0f, steerParallax=0f, tint=new Color(0.92f,0.92f,0.98f) },
     };
 
+    [Header("Floating far mountain (the island in the fog sea)")]
+    [Tooltip("Layer (by texture name) that slowly hovers; empty = off")] public string floatLayer = "T_Ride_SpiresWide";
+    [Tooltip("Hover amplitude in ref px (x = sideways drift, y = up/down bob)")] public Vector2 floatAmplitudePx = new Vector2(6f, 14f);
+    [Tooltip("Seconds per up/down bob (the sideways drift is slower)")] public float floatPeriod = 9f;
+    [Tooltip("Mist that laps at the island's base and stays put while the island bobs (sells the hovering)")] public bool buildIslandMist = true;
+    [Range(0, 1)] public float islandMistAlpha = 0.85f;
+    [Tooltip("Mist centre in world coords (x: 0..1 = design width, can go past 1 on wide screens; y: 0 bottom .. 1 top)")] public Vector2 islandMistCenter = new Vector2(1.71f, 0.33f);
+    [Tooltip("Mist size in world fractions (width, height)")] public Vector2 islandMistSize = new Vector2(0.72f, 0.12f);
+    [Tooltip("Slow sideways breathing of the mist (ref px)")] public float islandMistSway = 18f;
+
     [Header("Fog (procedural dithered pixel fog)")]
     public bool buildFog = true;
     public Color fogColor = new Color(0.55f, 0.47f, 0.74f, 1f);
@@ -511,6 +521,7 @@ public class HorseRideRig : MonoBehaviour
             bool second = (L.motion == Motion.Loop && L.crossfade) || L.motion == Motion.Tunnel;
             if (second) { L.b = MakeImage(nice + "_B", tex, L.group); SetupLayerRect(L.b); }
             if (L.motion == Motion.Tunnel && L.tunnelCopies >= 3) { L.c = MakeImage(nice + "_C", tex, L.group); SetupLayerRect(L.c); }
+            if (buildFog && buildIslandMist && !string.IsNullOrEmpty(floatLayer) && L.textureName == floatLayer) AddIslandMist(parent);
             if (buildMoonRays && L.textureName.Contains("Castle")) { BuildMoonRays(parent); _rays.transform.SetSiblingIndex(L.group.GetSiblingIndex()); }   // rays behind the castle: castle stays crisp
             if (buildFog && buildRightFog && rightFogBackAlpha > 0f && L.textureName.Contains("Valley"))
                 AddSideFog("Fog_Right_Back", parent, 1, rightFogTop - rightFogBackFade * rightFogBackFadeBelow, rightFogTop + rightFogBackFade * (1f - rightFogBackFadeBelow * 0.5f),
@@ -656,6 +667,35 @@ public class HorseRideRig : MonoBehaviour
         img.rectTransform.offsetMin = new Vector2(-ex * WorldW, 0); img.rectTransform.offsetMax = new Vector2(ex * WorldW, 0);
         img.uvRect = new Rect(0f, 0f, 1f + 2f * ex, 1f);
         _fogSheets.Add(new FogSheet { img = img, speed = speed, steer = steer, scroll = true });
+    }
+
+    // Mist patch at the base of the floating island: densest at the island's foot, ragged dithered edges, stays still
+    // (apart from a slow sway) while the island bobs above it.
+    void AddIslandMist(RectTransform parent)
+    {
+        int W = 120, H = 30;
+        var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = filter, name = "Gen_Fog_IslandMist" };
+        var px = new Color32[W * H];
+        Color32 fc = rightFogColor;
+        const int Levels = 8;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float u = (x + 0.5f) / W * 2f - 1f, v = (y + 0.5f) / H;
+                float n = Mathf.PerlinNoise(x * 0.09f + 7.3f, y * 0.25f + 1.7f) * 0.65f + Mathf.PerlinNoise(x * 0.23f, y * 0.6f + 9f) * 0.35f;
+                float horiz = 1f - Smooth(0.45f + n * 0.25f, 1f, Mathf.Abs(u));
+                float vert = v < 0.5f ? Smooth(0f, 0.5f, v) : 1f - Smooth(0.5f, 0.62f + n * 0.38f, v);   // thick at the foot, wisps rising
+                float d = Mathf.Clamp01(horiz * vert * (0.75f + n * 0.6f));
+                float q = d * Levels + Bayer(x, y) - 0.5f;
+                int lvl = Mathf.Clamp(Mathf.FloorToInt(q + 0.5f), 0, Levels);
+                px[y * W + x] = new Color32(fc.r, fc.g, fc.b, (byte)(lvl * 255 / Levels));
+            }
+        t.SetPixels32(px); t.Apply(false);
+        var img = MakeImage("Fog_IslandMist", t, parent); img.color = new Color(1, 1, 1, islandMistAlpha);
+        var rt = img.rectTransform;
+        rt.anchorMin = islandMistCenter - islandMistSize * 0.5f; rt.anchorMax = islandMistCenter + islandMistSize * 0.5f;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        _fogSheets.Add(new FogSheet { img = img, speed = 0f, steer = 0f, sway = islandMistSway, seed = 211, scroll = false });
     }
 
     // Fog bank beside the road (side +1 right, -1 left). It touches the road edge (no gap), follows the road perspective,
@@ -1337,6 +1377,14 @@ public class HorseRideRig : MonoBehaviour
             if (L.motion == Motion.Static)
             {
                 var srt = L.a.rectTransform; srt.localScale = Vector3.one; srt.anchoredPosition = Vector2.zero;
+                if (!string.IsNullOrEmpty(floatLayer) && L.textureName == floatLayer)
+                {
+                    // hovering: slow bob + slower sideways drift (two sines, so it never looks mechanical)
+                    float w = Mathf.PI * 2f / Mathf.Max(0.5f, floatPeriod);
+                    srt.anchoredPosition = new Vector2(
+                        floatAmplitudePx.x * (Mathf.Sin(tNow * w * 0.43f + 1.1f) * 0.8f + Mathf.Sin(tNow * w * 0.17f) * 0.2f),
+                        floatAmplitudePx.y * (Mathf.Sin(tNow * w) * 0.85f + Mathf.Sin(tNow * w * 2.3f + 0.7f) * 0.15f));
+                }
                 L.a.color = grade * L.tint;
                 foreach (var extra in new[] { L.b, L.c }) if (extra) extra.color = Color.clear;
                 continue;
